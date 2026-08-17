@@ -50,6 +50,11 @@ $script:Xl = @{
     # 呼び出し側（Get-XlsFormulaCellKeySet）で握りつぶす（S-7）。
     xlCellTypeFormulas = -4123
 
+    # T-10 Test-XlsFormulas: Range.SpecialCells(Type, Value) の第 2 引数（対象セルの種別フィルター）。
+    # xlCellTypeFormulas と組み合わせると「エラー値を返す数式セルだけ」を選べる（実機確認済み。
+    # 実装メモ参照）。ヒットなしの例外挙動は xlCellTypeFormulas 単独のときと同じ（HRESULT 0x800A03EC）。
+    xlErrors = 16
+
     # T-08 Get-XlsModel: Workbook.LinkSources(Type) の Type 引数（Excel 形式の外部参照リンク）。
     # 実機で確認済み（実装メモ参照）: 未解決の外部リンク（存在しないブックを指す数式）を含む
     # ワークブックを保存・再オープンしても Formula は消えず、LinkSources は解決できないリンク先の
@@ -2930,18 +2935,134 @@ function Set-XlsRange {
     $rangeObj.Value2 = $grid
 }
 
+function Get-XlsFormulaErrorCells {
+    <#
+    .SYNOPSIS
+        Range 内の「エラー値を返す数式セル」を、絶対座標（シート上の行・列）とエラー種別の
+        表示文字列（"#REF!" 等）付きで返す。ヒットなし（範囲内にエラー数式セルが 1 つもない）は
+        空配列として扱う。Test-XlsFormulas の内部関数（T-10）。COM は Range オブジェクトの読み取りのみ
+        （Invoke-XlsSession の ScriptBlock 内から呼ばれる前提。G-06）。Export しない。
+    .PARAMETER RangeObj
+        対象の Range COM オブジェクト（通常はシートの UsedRange）。
+    .EXAMPLE
+        Get-XlsFormulaErrorCells -RangeObj $ws.UsedRange
+    .NOTES
+        T-08 の Get-XlsFormulaCellKeySet と同型の実装判断（レビュー round 1 の指摘方針を踏襲）:
+          - `SpecialCells(xlCellTypeFormulas, xlErrors)` がヒットなし（範囲内にエラー数式セルが
+            1 つもない）で HRESULT 0x800A03EC の COMException を投げるのは正常系なので握りつぶす。
+            それ以外の COMException・例外は re-throw する（「あらゆる例外を握りつぶす」ではない。
+            T-08 round 1 should-fix と同じ方針）。
+          - Areas ごとに `Value2` を 1 回だけ一括取得し（セル単位の COM 呼び出しをしない。101 個以上の
+            エラーセルを想定した効率のため）、オフラインでオフセット計算してエラーコード（[int]）を
+            $script:XlValue2ErrorCodes で表示文字列に変換する。未知のコードは ConvertFrom-XlsValue2 と
+            同じ規約で "#ERR(<code>)" にフォールバックする（情報を失わないため）。
+          - Area が 1x1 のときは `Value2` がスカラーで返る（T-06/T-08 と同型の罠）。
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        $RangeObj
+    )
+
+    $results = New-Object System.Collections.ArrayList
+
+    try {
+        $errorRange = $RangeObj.SpecialCells($script:Xl.xlCellTypeFormulas, $script:Xl.xlErrors)
+    }
+    catch [System.Runtime.InteropServices.COMException] {
+        # ヒットなし（範囲内にエラー数式セルが 1 つもない）は正常系。Get-XlsFormulaCellKeySet
+        # （T-08）と同じ HRESULT で確認済み。
+        if ($_.Exception.HResult -eq -2146827284) {
+            return , $results.ToArray()
+        }
+        throw
+    }
+
+    foreach ($area in $errorRange.Areas) {
+        $areaRow = [int]$area.Row
+        $areaCol = [int]$area.Column
+        $rawValue2 = $area.Value2
+
+        if ($rawValue2 -isnot [Array]) {
+            $code = [int]$rawValue2
+            $label = if ($script:XlValue2ErrorCodes.ContainsKey($code)) { $script:XlValue2ErrorCodes[$code] } else { "#ERR($code)" }
+            [void]$results.Add([PSCustomObject][ordered]@{
+                Row   = $areaRow
+                Col   = $areaCol
+                Label = $label
+            })
+            continue
+        }
+
+        $rowLower = $rawValue2.GetLowerBound(0)
+        $rowUpper = $rawValue2.GetUpperBound(0)
+        $colLower = $rawValue2.GetLowerBound(1)
+        $colUpper = $rawValue2.GetUpperBound(1)
+
+        for ($r = $rowLower; $r -le $rowUpper; $r++) {
+            $absRow = $areaRow + ($r - $rowLower)
+            for ($c = $colLower; $c -le $colUpper; $c++) {
+                $absCol = $areaCol + ($c - $colLower)
+                $code = [int]$rawValue2[$r, $c]
+                $label = if ($script:XlValue2ErrorCodes.ContainsKey($code)) { $script:XlValue2ErrorCodes[$code] } else { "#ERR($code)" }
+                [void]$results.Add([PSCustomObject][ordered]@{
+                    Row   = $absRow
+                    Col   = $absCol
+                    Label = $label
+                })
+            }
+        }
+    }
+
+    return , $results.ToArray()
+}
+
 function Test-XlsFormulas {
     <#
     .SYNOPSIS
-        全シートを再計算し、数式エラーの有無を recalc.py 互換の JSON 契約で返す。
+        全シートを再計算し、数式エラーの有無を recalc.py 互換の JSON 契約で返す（01-design.md §3.6）。
     .PARAMETER Path
         対象ワークブックのパス。
     .PARAMETER TimeoutSec
-        再計算のタイムアウト秒数（既定 30）。
+        再計算のタイムアウト秒数（既定 30）。T-10 時点では未使用（T-12 の CLI ラッパーで配線予定。
+        実装メモ参照）。
     .PARAMETER Force
-        外部リンク先が見つからない場合でも再計算を続行する。
+        外部リンク先が見つからない場合でも再計算を続行する。T-10 時点では未使用（外部リンク検出は
+        T-11 の範囲）。
+    .PARAMETER AsJson
+        指定した場合、オブジェクトではなく JSON 文字列（recalc.py 完全互換のキー名）で返す。
     .EXAMPLE
         Test-XlsFormulas -Path 'C:\tmp\book.xlsx'
+    .EXAMPLE
+        Test-XlsFormulas -Path 'C:\tmp\book.xlsx' -AsJson
+    .NOTES
+        戻り値の形（G-04、recalc.py と完全一致させる。一字も変えない）:
+          { status: "success" | "errors_found",
+            total_formulas: int,
+            total_errors: int,
+            error_summary: { "#REF!": { count: int, locations: ["Sheet1!B5", ...], locations_truncated: int }, ... } }
+
+        実装判断（詳細は実装メモ）:
+          - `Invoke-XlsSession -ReadOnly` で開く（検証専用、ファイルは変更しない）。開いた直後は
+            Invoke-XlsSession が Calculation=Manual を強制するため、`Set-XlsCalculationAutomatic`
+            （T-04/Save-XlsWorkbook と共有する内部ヘルパー）で Automatic に戻し
+            `CalculateFullRebuild` を実行してから走査する。Manual のまま古い値が残ったブックでも
+            正しい結果になる（T-04 罠 5 と同じ機序。実装メモにこの機序を利用したテストの説明あり）。
+          - total_formulas はシートごとに `Get-XlsFormulaCellKeySet`（T-08 と共有）の `.Count` を
+            UsedRange に対して求めて合算する（数式セルなしは空集合として扱われるので例外にならない）。
+          - エラー検出は `Get-XlsFormulaErrorCells`（本タスクの内部関数）を UsedRange に対して呼ぶ。
+          - locations の順序はシート順（`Workbook.Worksheets` のタブ順）→セル順（行→列の昇順、
+            `Sort-Object -Property Row, Col` で明示的に確定させる。`SpecialCells` の Areas 列挙順は
+            仕様として保証されていないため頼らない）。決定的であることをテストで固定する。
+          - error_summary のキー（エラー種別文字列）の出現順は、上記の決定的な走査順で最初に
+            そのエラー種別に出会った順（`[ordered]` ハッシュテーブルで確定）。JSON 契約はキー名・
+            ネストのみを規定しキー順は規定していないが、決定的にしておく。
+          - locations は種別ごとに先頭 100 件のみ保持し、`locations_truncated` に「100 件を超えた分」
+            （`count - 100`、0 未満にならないよう Max で下限を切る）を入れる。
+          - status は total_errors が 0 なら "success"、そうでなければ "errors_found"。数式が
+            1 つもないブックも total_formulas=0 / total_errors=0 / status="success"（error_summary は
+            空オブジェクト）になる。
+          - 外部リンクの refused 判定（`$Force`/`$TimeoutSec` の実配線含む）は T-11/T-12 の範囲。
     #>
     [CmdletBinding()]
     param(
@@ -2950,10 +3071,82 @@ function Test-XlsFormulas {
 
         [int]$TimeoutSec = 30,
 
-        [switch]$Force
+        [switch]$Force,
+
+        [switch]$AsJson
     )
 
-    throw 'Test-XlsFormulas は未実装です（T-10〜T-12 で実装予定）。'
+    $result = Invoke-XlsSession -Path $Path -ReadOnly -ScriptBlock {
+        param($app, $wb)
+
+        # Invoke-XlsSession は Open 直後に Calculation=Manual を強制する（G-06 上の唯一の COM 経路）。
+        # Manual のまま古い値が残っていても正しい結果になるよう、走査前に必ず Automatic + フル再計算
+        # へ戻す（Save-XlsWorkbook と共有する内部ヘルパー。T-04 罠 5 と同じ機序）。
+        Set-XlsCalculationAutomatic -Application $app
+
+        $totalFormulas = 0
+        $typeState = [ordered]@{}
+
+        foreach ($ws in $wb.Worksheets) {
+            $usedRange = $ws.UsedRange
+
+            $formulaKeySet = Get-XlsFormulaCellKeySet -RangeObj $usedRange
+            $totalFormulas += $formulaKeySet.Count
+
+            $errorCells = Get-XlsFormulaErrorCells -RangeObj $usedRange
+            if ($errorCells.Count -eq 0) {
+                continue
+            }
+
+            # シート順（外側の foreach）→セル順（行→列）を決定的にする。SpecialCells の Areas 列挙順
+            # は仕様として保証されていないため、必ずソートしてから locations に積む。
+            $sortedCells = @($errorCells | Sort-Object -Property Row, Col)
+
+            foreach ($cell in $sortedCells) {
+                $label = $cell.Label
+                if (-not $typeState.Contains($label)) {
+                    $typeState[$label] = [PSCustomObject]@{
+                        Count     = 0
+                        Locations = New-Object System.Collections.ArrayList
+                    }
+                }
+
+                $entry = $typeState[$label]
+                $entry.Count++
+                if ($entry.Locations.Count -lt 100) {
+                    $address = (ConvertTo-XlsColumnLetter -Column $cell.Col) + $cell.Row
+                    [void]$entry.Locations.Add("$($ws.Name)!$address")
+                }
+            }
+        }
+
+        $errorSummaryOut = [ordered]@{}
+        $totalErrors = 0
+        foreach ($label in $typeState.Keys) {
+            $entry = $typeState[$label]
+            $totalErrors += $entry.Count
+            $errorSummaryOut[$label] = [PSCustomObject][ordered]@{
+                count               = $entry.Count
+                locations           = @($entry.Locations.ToArray())
+                locations_truncated = [Math]::Max(0, $entry.Count - 100)
+            }
+        }
+
+        $status = if ($totalErrors -eq 0) { 'success' } else { 'errors_found' }
+
+        return [PSCustomObject][ordered]@{
+            status         = $status
+            total_formulas = $totalFormulas
+            total_errors   = $totalErrors
+            error_summary  = $errorSummaryOut
+        }
+    }
+
+    if ($AsJson) {
+        return ConvertTo-Json -InputObject $result -Depth 10
+    }
+
+    return $result
 }
 
 function Remove-XlsOrphanMarker {

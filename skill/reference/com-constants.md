@@ -7,7 +7,7 @@
 | 名前 | 値 | 用途 | 確認 |
 |---|---|---|---|
 | xlCellTypeFormulas | -4123 | SpecialCells | 2026-08-17（T-08 Get-XlsModel、実機。`Range.SpecialCells(-4123)` で数式セルのみの Range を取得、ヒットなしは HRESULT 0x800A03EC 例外になることを確認） |
-| xlErrors | 16 | SpecialCells 第 2 引数 | |
+| xlErrors | 16 | SpecialCells 第 2 引数 | 2026-08-17（T-10 Test-XlsFormulas、実機。`Range.SpecialCells(-4123, 16)` で「エラー値を返す数式セルだけ」の Range を取得できることを確認。ヒットなしは xlCellTypeFormulas 単独と同じ HRESULT 0x800A03EC 例外） |
 | xlCalculationManual | -4135 | Application.Calculation | 2026-08-17（T-03 Invoke-XlsSession、実機） |
 | xlCalculationAutomatic | -4105 | Application.Calculation | 2026-08-17（T-04 Save-XlsWorkbook、実機。Automatic のまま保存すると xl/workbook.xml の calcPr から calcMode 属性が省略されることまで確認） |
 | xlOpenXMLWorkbook | 51 | SaveAs .xlsx | 2026-08-17（T-04 Save-XlsWorkbook、実機。SaveAs 直後の Workbook.FileFormat で確認） |

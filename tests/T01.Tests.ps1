@@ -98,7 +98,9 @@ Describe 'XlsAgent module skeleton (T-01)' {
         # T-09: Set-XlsRange 実装済み（無効な範囲アドレス・寸法不一致・データ 0 行/0 列等の検証の
         # throw が残っているため、このループに残しても偶然パスしてしまう。実装済みという事実を
         # 明示するため除外する）。
-        $_ -notin @('Invoke-XlsSession', 'Save-XlsWorkbook', 'Clear-XlsOrphans', 'Get-XlsRange', 'Get-XlsOverview', 'Get-XlsModel', 'Set-XlsRange')
+        # T-10: Test-XlsFormulas 実装済み（ファイル不在は Invoke-XlsSession 側の throw に委譲しており、
+        # 自身の ScriptBlock 直下には throw 文がない。Save-XlsWorkbook と同型の理由で除外する）。
+        $_ -notin @('Invoke-XlsSession', 'Save-XlsWorkbook', 'Clear-XlsOrphans', 'Get-XlsRange', 'Get-XlsOverview', 'Get-XlsModel', 'Set-XlsRange', 'Test-XlsFormulas')
     }
 
     foreach ($fn in $script:StillStubFunctions) {

@@ -13,7 +13,7 @@
 | T-07 | Get-XlsOverview | done | r1 | 2026-08-17 |
 | T-08 | Get-XlsModel | done | r1 | 2026-08-17 |
 | T-09 | Set-XlsRange | done | r1 | 2026-08-17 |
-| T-10 | Test-XlsFormulas 関数 | impl | r1 | 2026-08-17 |
+| T-10 | Test-XlsFormulas 関数 | review | r1 | 2026-08-17 |
 | T-11 | 外部リンク refused / -Force | todo | - | |
 | T-12 | Test-XlsFormulas.ps1 CLI | todo | - | |
 | T-13 | com-constants.md 充填 | todo | - | |
