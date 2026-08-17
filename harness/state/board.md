@@ -4,8 +4,8 @@
 
 | ID | タスク | 状態 | ラウンド | 更新日 |
 |---|---|---|---|---|
-| T-01 | モジュール骨組み・Pester 3.4 確認 | todo | - | |
-| T-02 | Excel 起動終了スモーク・残骸ゼロ検証 | todo | - | |
+| T-01 | モジュール骨組み・Pester 3.4 確認 | done | r2 | 2026-08-17 |
+| T-02 | Excel 起動終了スモーク・残骸ゼロ検証 | impl | r1 | 2026-08-17 |
 | T-03 | Invoke-XlsSession | todo | - | |
 | T-04 | Save-XlsWorkbook | todo | - | |
 | T-05 | Clear-XlsOrphans | todo | - | |
