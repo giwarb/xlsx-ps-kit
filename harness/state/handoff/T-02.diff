@@ -1,0 +1,721 @@
+diff --git a/harness/state/board.md b/harness/state/board.md
+index 7279edf..3ffc080 100644
+--- a/harness/state/board.md
++++ b/harness/state/board.md
+@@ -5,7 +5,7 @@
+ | ID | タスク | 状態 | ラウンド | 更新日 |
+ |---|---|---|---|---|
+ | T-01 | モジュール骨組み・Pester 3.4 確認 | done | r2 | 2026-08-17 |
+-| T-02 | Excel 起動終了スモーク・残骸ゼロ検証 | impl | r1 | 2026-08-17 |
++| T-02 | Excel 起動終了スモーク・残骸ゼロ検証 | review | r2 | 2026-08-17 |
+ | T-03 | Invoke-XlsSession | todo | - | |
+ | T-04 | Save-XlsWorkbook | todo | - | |
+ | T-05 | Clear-XlsOrphans | todo | - | |
+diff --git a/harness/state/handoff/T-02.diff b/harness/state/handoff/T-02.diff
+new file mode 100644
+index 0000000..e69de29
+diff --git a/harness/state/reviews/T-02.md b/harness/state/reviews/T-02.md
+new file mode 100644
+index 0000000..05df540
+--- /dev/null
++++ b/harness/state/reviews/T-02.md
+@@ -0,0 +1,157 @@
++# Review T-02 (round 1)
++
++## 判定: fix
++
++## テスト実行
++
++- コマンド: `powershell -NoProfile -ExecutionPolicy Bypass -Command Invoke-Pester -Path tests\T02.Tests.ps1`
++- 結果: 未実行（passed - / failed -）。Windows サンドボックス初期化時に `codex-windows-sandbox-setup.exe` が見つからず、PowerShell プロセスを起動できなかった。実装メモの passed 3 / failed 0 は独立確認できていない。
++- EXCEL.EXE 差分: 未確認。前後確認用の `Get-Process EXCEL -ErrorAction SilentlyContinue | Select Id` も同じサンドボックス制約で実行できなかった。
++
++## チェックリスト
++
++| # | 項目 | ○/×/- | メモ |
++|---|---|---|---|
++| C-1 | 関数シグネチャが 01-design.md §3 と一致（引数名・型・既定値） | - | T-02 は非公開ヘルパーのみ。公開関数のシグネチャ変更なし |
++| C-2 | 戻り値の形（オブジェクト／JSON キー名）が設計と一致 | - | 公開関数の戻り値は未実装 |
++| C-3 | `Test-XlsFormulas` の JSON が recalc.py 契約と一致 | - | T-10 以降 |
++| C-4 | exit code 契約（`error` キーのときだけ非 0） | - | T-12 |
++| C-5 | 確定事項（§0）に触れる変更がない | ○ | COM方式・依存関係等に変更なし |
++| C-6 | タスクカードの範囲外を触っていない | ○ | 起動・終了ヘルパーとスモークテストの範囲内 |
++| S-1 | `GetActiveObject` を使っていない | ○ | `New-Object -ComObject Excel.Application` のみ |
++| S-2 | COM が `Invoke-XlsSession` 外に漏れていない（テスト含む） | ○ | T-02 の明記された読み替え範囲内。T-03 で `Invoke-XlsSession` に収容する必要あり |
++| S-3 | `finally` で Close→Quit→Release（逆順）→GC×2 | × | 通常経路の順序は正しいが、`Quit()` が例外になると Release・GC に到達しない |
++| S-4 | ScriptBlock 内で `throw` してもプロセスが残らない（テストで確認） | ○ | 相当する呼び出し側例外テストあり。実行結果は独立確認不可 |
++| S-5 | `Value2` を使い、`Value`/`Text` を数値・日付取得に使っていない | - | Range 操作なし |
++| S-6 | 2 次元代入が `[object[,]]` | - | Range 操作なし |
++| S-7 | `SpecialCells` のヒットなし例外を処理 | - | T-10 |
++| S-8 | `DisplayAlerts=$false` 中に `Close(SaveChanges:=$true)` していない | ○ | Workbook 操作なし |
++| S-9 | 全殺し（`Get-Process EXCEL \| Stop-Process`）がない | × | 全殺し構文はないが、差分だけで所有権を推定した PID を強制終了するため G-10 を満たさない |
++| S-10 | ReadOnly 検出・STA 検査がある（T-03 のみ） | - | T-03 |
++| P-1 | `#Requires -Version 5.1` | ○ | モジュール・テスト双方にあり |
++| P-2 | 三項演算子 / `??` / `?.` / `-Parallel` / `$IsWindows` なし | ○ | 5.1 非互換構文なし |
++| P-3 | ファイル I/O に `-Encoding UTF8` | - | ファイル I/O なし |
++| P-4 | Pester 3.4 で動く構文 | ○ | `Should Be` 形式で v5 専用構文なし |
++| T-1 | Pester が緑（自分で実行） | - | サンドボックス制約により完走できず |
++| T-2 | `AfterEach` に `Assert-NoOrphanExcel` | ○ | `tests/T02.Tests.ps1:58` |
++| T-3 | 実 Excel を起動している（モックでない） | ○ | 内部ヘルパーから実 COM を起動 |
++| T-4 | 02-implementation-plan.md §4 の受け入れ要点が全部テストにある | ○ | T-02 の起動→Quit→PID差分ゼロを網羅。Calculation の延期は下記判断のとおり妥当 |
++| T-5 | 異常系が最低 1 つある | ○ | 呼び出し側で例外が発生するケースあり |
++| Q-1 | コメントベースヘルプがある | ○ | 両内部ヘルパーに `.SYNOPSIS`、`.PARAMETER`、`.EXAMPLE` あり |
++| Q-2 | エラーメッセージが次の一手を示す | × | 初期化・Quit の COM 例外を包まず、強制終了エラーは握りつぶしている |
++| Q-3 | COM 定数が `$script:Xl` に集約され、`com-constants.md` に追記されている | - | Calculation を T-03 に延期したため今回の定数使用なし |
++| Q-4 | 実装メモに COM の罠が書かれている | ○ | Calculation、終了遅延、PID収束等が具体的に記録されている |
++| Q-5 | 自己チェック欄の○が事実と一致 | - | G-05、G-06、G-07、G-08、G-11、G-13 は一致。G-15 は独立確認不可 |
++
++## 指摘
++
++### [blocking] PID 差分は「自分が起動したプロセス」の証明にならない
++
++- 場所: `skill/scripts/XlsAgent.psm1:47`、`skill/scripts/XlsAgent.psm1:61`、`skill/scripts/XlsAgent.psm1:137`
++- 内容: 起動前後の PID 差分が複数なら `$diff[0]` を選んでいます。同じ時間帯にユーザーが Excel を起動した場合、その PID を `XlsAgentProcessId` として誤記録し、5 秒後に `Stop-Process -Force` でユーザーの Excel を強制終了し得ます。コード自身も同時起動時の誤検出を認識しています。単一 PID に限定すること自体は G-10 に反しませんが、その PID が自プロセスであることを確実に証明できていないため、現実装は G-10 違反です。PID 再利用に対する防御もありません。
++- 修正案: `Application.Hwnd` を `GetWindowThreadProcessId` で PID に変換し、さらにプロセス開始時刻を記録してください。強制終了直前に PID と開始時刻の両方が一致しなければ fail closed とし、強制終了しないようにします。
++
++```powershell
++if (-not ('XlsAgent.NativeMethods' -as [type])) {
++    Add-Type -Namespace XlsAgent -Name NativeMethods -MemberDefinition @'
++[System.Runtime.InteropServices.DllImport("user32.dll")]
++public static extern uint GetWindowThreadProcessId(
++    System.IntPtr hWnd,
++    out uint processId
++);
++'@
++}
++
++[uint32]$newPid = 0
++[void][XlsAgent.NativeMethods]::GetWindowThreadProcessId(
++    [IntPtr]$app.Hwnd,
++    [ref]$newPid
++)
++
++$process = Get-Process -Id $newPid -ErrorAction Stop
++if ($process.ProcessName -ne 'EXCEL') {
++    throw "Excel process identity could not be verified."
++}
++
++$app | Add-Member XlsAgentProcessId ([int]$newPid) -Force
++$app | Add-Member XlsAgentProcessStartTicks `
++    $process.StartTime.ToUniversalTime().Ticks -Force
++
++# 強制終了直前
++$target = Get-Process -Id $targetPid -ErrorAction SilentlyContinue
++if ($target -and
++    $target.StartTime.ToUniversalTime().Ticks -eq $targetStartTicks) {
++    Stop-Process -InputObject $target -Force -ErrorAction Stop
++}
++```
++
++### [should-fix] 起動・終了途中の例外で COM の解放処理を飛ばす
++
++- 場所: `skill/scripts/XlsAgent.psm1:50`、`skill/scripts/XlsAgent.psm1:112`
++- 内容: Excel 作成後、初期プロパティ設定や PID 特定で例外になると `Start-XlsApplication` は COM オブジェクトを返せず、呼び出し側は後始末できません。また `Quit()` が例外になると `ReleaseComObject` と GC×2 が実行されません。現在の異常系テストは「起動が正常完了した後の呼び出し側例外」しか扱わないため、この経路を検出できません。
++- 修正案:
++
++```powershell
++# Start-XlsApplication
++$app = $null
++try {
++    $app = New-Object -ComObject Excel.Application
++    # 初期状態設定と所有 PID の特定
++    return $app
++}
++catch {
++    if ($null -ne $app) {
++        try { $app.Quit() } catch {}
++        if ([Runtime.InteropServices.Marshal]::IsComObject($app)) {
++            [void][Runtime.InteropServices.Marshal]::ReleaseComObject($app)
++        }
++        [GC]::Collect()
++        [GC]::WaitForPendingFinalizers()
++        [GC]::Collect()
++        [GC]::WaitForPendingFinalizers()
++    }
++    throw "Excel initialization failed and cleanup was attempted: $($_.Exception.Message)"
++}
++
++# Stop-XlsApplication
++try {
++    $Application.Quit()
++}
++finally {
++    if ([Runtime.InteropServices.Marshal]::IsComObject($Application)) {
++        [void][Runtime.InteropServices.Marshal]::ReleaseComObject($Application)
++    }
++    [GC]::Collect()
++    [GC]::WaitForPendingFinalizers()
++    [GC]::Collect()
++    [GC]::WaitForPendingFinalizers()
++}
++```
++
++### [should-fix] 強制終了の失敗を成功扱いして返す
++
++- 場所: `skill/scripts/XlsAgent.psm1:137`
++- 内容: `Stop-Process -Force -ErrorAction SilentlyContinue` の後に消滅確認がなく、アクセス拒否などでも正常終了したように返ります。テスト側は最終的に残骸を検出できますが、ヘルパー利用側には失敗理由が伝わりません。
++- 修正案:
++
++```powershell
++Stop-Process -Id $targetPid -Force -ErrorAction Stop
++
++$deadline = (Get-Date).AddSeconds(5)
++while ((Get-Date) -lt $deadline -and
++       (Get-Process -Id $targetPid -ErrorAction SilentlyContinue)) {
++    Start-Sleep -Milliseconds 100
++}
++
++if (Get-Process -Id $targetPid -ErrorAction SilentlyContinue) {
++    throw "Owned Excel process PID $targetPid did not terminate."
++}
++```
++
++## 良かった点（1〜2 行、次のタスクでも続けてほしいこと）
++
++`Application.Calculation` を Workbooks が空の段階で設定できないという実機結果に基づき、T-02 では除外し、T-03 で `Open/Add` 直後かつユーザーの ScriptBlock 実行前に設定する判断は妥当です。これは §3.1 の最終的な初期状態契約を維持した実行順序の修正であり、設計変更とは扱いません。
++
++## SKILL.md gotchas 候補（実装メモに書かれていないが気づいた罠があれば）
++
++なし。Calculation の設定時期と終了遅延は実装メモに記載済みです。PID の所有権確定は利用者向け gotcha ではなく、`Invoke-XlsSession` 内部で解決すべき安全要件です。
+\ No newline at end of file
+diff --git a/harness/state/tasks/T-02.md b/harness/state/tasks/T-02.md
+index 62dec64..5b59dc2 100644
+--- a/harness/state/tasks/T-02.md
++++ b/harness/state/tasks/T-02.md
+@@ -29,13 +29,96 @@ T-03 `Invoke-XlsSession` 本実装の土台とする。
+ 
+ ## 実装メモ(Sonnet が記入)
+ 
++### やったこと
++
++- `skill/scripts/XlsAgent.psm1` に Export しない内部ヘルパー 2 つを追加(T-03 の `Invoke-XlsSession` の土台)。
++  - `Start-XlsApplication -Visible`: `New-Object -ComObject Excel.Application` で新規起動し、
++    ワークブックなしで設定可能な初期状態(`Visible/DisplayAlerts/ScreenUpdating/EnableEvents/AskToUpdateLinks`)を設定して返す。
++    起動前後の `Get-Process EXCEL` 差分で PID を特定し、戻り値の COM オブジェクトに `NoteProperty XlsAgentProcessId` として付与する。
++  - `Stop-XlsApplication -Application -GraceSec 5`: `Quit → ReleaseComObject → GC×2` の後、
++    `XlsAgentProcessId` が消えるまで `GraceSec` 秒だけ待ち、まだ残っていればそのPID **だけ** `Stop-Process -Force` する(G-10 準拠、全殺しではない)。
++- `tests/T02.Tests.ps1` を新規作成。3 ケース:
++  1. `Start-XlsApplication`/`Stop-XlsApplication` が Export されず、モジュールスコープ内には存在すること。
++  2. 起動 → 初期状態確認 → 終了 → PID 差分ゼロの本編スモークテスト。
++  3. `Start-XlsApplication` と `Stop-XlsApplication` の間で例外が飛んでも(呼び出し側の `finally` で片付ければ)残骸が出ないこと。
++- 両ファイルとも UTF-8 BOM 付きで保存(T-01 の教訓、`[System.IO.File]::WriteAllText` + `UTF8Encoding($true)` で確認)。
++- `$script:Xl` は空のまま維持(T-01 の「空の器」テストを壊さないため。理由は下記の罠を参照)。
++
++### 踏んだ COM の罠(S-05)
++
++1. **`Application.Calculation` はワークブックが1つも無いと設定できない。**
++   `Workbooks.Count -eq 0` の状態で `$app.Calculation = xlCalculationManual(-4135)` を実行すると
++   `Exception setting "Calculation": "Exception from HRESULT: 0x800A03EC"` で失敗する(実機で再現確認済み)。
++   01-design.md §3.1 は「起動 → 初期状態設定(Calculation含む) → Workbooks.Open」の順で書かれているが、
++   実際には Calculation の設定は **ワークブックを開いた後**でないと通らない。
++   → T-02 では Calculation の設定・検証を対象から外した(`Start-XlsApplication` はこの5つのみ設定)。
++   T-03 の `Invoke-XlsSession` では `Workbooks.Open/Add` の**後**に `Calculation` を設定すること。この罠は
++   `$script:Xl.xlCalculationManual` を使わずに済んだため、`$script:Xl` は T-01 のまま空で維持した
++   (充填は予定どおり T-13、または T-03 で実際に使うタイミングで追加)。
++2. **`Quit()` → `ReleaseComObject`(戻り値 0 を確認)→ `GC.Collect()`×2 をしても、EXCEL.EXE プロセス自体は
++   すぐには終了しないことがある。** 実機の隔離実験(他の Excel 呼び出しを一切挟まない単独計測)で、
++   クライアント側の COM 参照をすべて解放した(`ReleaseComObject` の戻り値が 0)にもかかわらず、
++   プロセスが実際に消えるまで **約 60.5 秒** かかったケースを観測した。参照リークではなく、
++   Excel 側の終了処理が非同期・低優先度で行われるためと見られる。
++   → 素朴な `Quit→Release→GC×2→即座にPID確認` ではテストが安定しない(実際に最初の実装でこれにより2回失敗した)。
++   対策として `Stop-XlsApplication` に猶予秒数(既定5秒)のポーリング待ちを入れ、それでも残っていれば
++   `Start-XlsApplication` が特定した **その PID だけ** を `Stop-Process -Force` するフォールバックを追加した
++   (G-10 の「全殺し禁止」は `Get-Process EXCEL | Stop-Process` のような無差別停止の禁止であり、
++   自分が起動したと分かっている単一 PID を狙い撃ちする強制終了はこの禁止の対象外と解釈した)。
++3. **強制終了の直後、ベースラインにも起動 PID 一覧にも無い「別の」EXCEL.EXE が一瞬だけ現れることがある。**
++   Office の次回起動を早めるためと思われる裏プロセスらしく、数百 ms 以内に自然に消える。
++   単発の PID 比較(`Get-ExcelPids` を1回呼ぶだけ)だとこれを拾ってフレーキーに失敗する。
++   → テスト側の最終確認をポーリング化(最大10秒、ベースラインへの収束を待つ)して安定させた。
++4. (再確認)COM オブジェクトも PowerShell 上では `PSObject` にラップされているため、
++   `Add-Member -NotePropertyName ... -Force` で独自メタデータ(起動時に特定した PID)を安全に付与できる。
++   `Stop-XlsApplication` はこれを使って「自分が起動した PID」を Quit 後も追跡している。
++5. (再確認、T-01 の教訓どおり)`.ps1`/`.psm1` は UTF-8 **BOM 付き**で保存しないと、
++   PowerShell 5.1 が日本語コメントを含むファイルの構文解析でエラーになる。今回も編集後に毎回バイト列を確認した。
++
++### レビュー指摘への対応（round 1、harness/state/reviews/T-02.md）
++
++1. **[blocking] PID 差分は「自分が起動したプロセス」の証明にならない** → **対応した**。
++   `Start-XlsApplication` の PID 特定方法を「起動前後の `Get-Process EXCEL` 差分」から
++   「`Application.Hwnd` を `GetWindowThreadProcessId`（P/Invoke, `XlsAgent.NativeMethods`）で
++   解決した PID」に置き換えた。あわせて `Get-Process -Id $ownerPid` でプロセス名が `EXCEL` であることを検証し、
++   `StartTime`（UTC Ticks）を `XlsAgentProcessStartTicks` として PID とセットで記録するようにした。
++   `Stop-XlsApplication` は強制終了の直前に `Get-Process -Id $targetPid` の `StartTime` が記録済みの
++   Ticks と一致するかを再確認し、一致しなければ（PID 再利用の疑いがあれば）強制終了せず fail closed で
++   `throw` するようにした（レビューのコード例をほぼそのまま採用）。差分方式は撤去済み。
++2. **[should-fix] 起動・終了途中の例外で COM の解放処理を飛ばす** → **対応した**。
++   `Start-XlsApplication` は本体を `try` で包み、`catch` で（`$app` が存在すれば）`Quit`（失敗は握りつぶす）→
++   `IsComObject` 確認の上 `ReleaseComObject` → `GC.Collect/WaitForPendingFinalizers` ×2 を実行してから
++   例外を再送出するようにした。`Stop-XlsApplication` は `$Application.Quit()` を `try`、
++   `Release`＋`GC×2` を `finally` に移し、`Quit()` が例外を投げても後始末に必ず到達するようにした。
++3. **[should-fix] 強制終了の失敗を成功扱いして返す** → **対応した**。
++   `Stop-Process -Id ... -Force -ErrorAction SilentlyContinue` を
++   `Stop-Process -InputObject $target -Force -ErrorAction Stop` に変更し、失敗を握りつぶさないようにした。
++   実行後は最大 5 秒ポーリングして消滅を確認し、それでも残っていれば
++   `throw "Owned Excel process PID $targetPid did not terminate after Stop-Process."` するようにした。
++
++対応後、`tests/T02.Tests.ps1` を 2 回連続実行しどちらも 3/3 緑、`tests/T01.Tests.ps1` も 13/13 緑（回帰なし）。
++毎回 `Get-Process EXCEL` で残骸ゼロを確認した。
++
++### テスト実行結果（round 2、指摘反映後）
++
++```
++powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-Pester -Path tests\T02.Tests.ps1"
++Describing Excel launch/quit smoke test (T-02)
++ [+] exports only the 8 public functions; Start-XlsApplication/Stop-XlsApplication stay private
++ [+] launches exactly one new EXCEL.EXE process with the designed initial state, then Stop-XlsApplication leaves no orphan
++ [+] leaves no orphan even when the caller throws between launch and Stop-XlsApplication
++Tests completed. Passed: 3 Failed: 0 Skipped: 0 Pending: 0 Inconclusive: 0
++```
++2 回連続実行して両方 3/3 緑。実行後 `Get-Process EXCEL` は毎回 0 件(残骸なし)を確認。
++回帰確認として `tests/T01.Tests.ps1` も実行し 13/13 緑(`$script:Xl` を空のまま維持したため影響なし)。
++
+ ## 自己チェック
+ | # | 項目 | ○/× |
+ |---|---|---|
+-| G-05 | GetActiveObject を使っていない | |
+-| G-06 | COM は Invoke-XlsSession 内のみ(T-02 は上記読み替え) | |
+-| G-07 | Assert-NoOrphanExcel が AfterEach にある | |
+-| G-08 | Value2 代入は [object[,]] のみ | |
+-| G-11 | 7 専用構文なし | |
+-| G-13 | Pester テストがある | |
+-| G-15 | テストは緑 | |
++| G-05 | GetActiveObject を使っていない | ○ |
++| G-06 | COM は Invoke-XlsSession 内のみ(T-02 は上記読み替え) | ○(タスクカードの読み替えどおり、モジュール内部ヘルパーと T02.Tests.ps1 のみ) |
++| G-07 | Assert-NoOrphanExcel が AfterEach にある | ○ |
++| G-08 | Value2 代入は [object[,]] のみ | ○(該当なし。Range操作なし) |
++| G-11 | 7 専用構文なし | ○ |
++| G-13 | Pester テストがある | ○ |
++| G-15 | テストは緑 | ○(3/3、2回連続確認) |
+diff --git a/harness/state/tasks/T-03.md b/harness/state/tasks/T-03.md
+new file mode 100644
+index 0000000..1f4c215
+--- /dev/null
++++ b/harness/state/tasks/T-03.md
+@@ -0,0 +1,54 @@
++# T-03 Invoke-XlsSession
++
++## 目的
++COM セッション管理の中核 `Invoke-XlsSession` を実装する。以後すべての COM 操作はこの中でだけ行われる。
++
++> 01-design.md §3.1:
++> ```
++> Invoke-XlsSession -Path <string> [-ReadOnly] [-Visible] -ScriptBlock { param($app, $wb) ... }
++> ```
++> - 新規 `Excel.Application` を起動(`GetActiveObject` 禁止)。
++> - 初期状態: `Visible=$false, DisplayAlerts=$false, ScreenUpdating=$false, EnableEvents=$false, AskToUpdateLinks=$false, Calculation=xlCalculationManual`。
++> - `Workbooks.Open($Path, UpdateLinks:=0, ReadOnly:=$ReadOnly)`。ファイル不在で `-ReadOnly` でなければ `Workbooks.Add()`。
++> - 開いた直後に `$wb.ReadOnly` を確認し、`-ReadOnly` 指定なしで読み取り専用になった場合は例外(他プロセスが開いている)。
++> - STA でなければ例外(`[Threading.Thread]::CurrentThread.ApartmentState`)。
++> - 起動した PID を `$env:TEMP\xlsagent\<pid>.marker` に記録。
++> - `finally` で `Workbook.Close(SaveChanges:=$false)`(保存は ScriptBlock 内で `Save-XlsWorkbook` を明示)、`Application.Quit`、`ReleaseComObject` を逆順、`[GC]::Collect(); [GC]::WaitForPendingFinalizers()` を 2 回、マーカー削除。
++> - 戻り値: ScriptBlock の戻り値をそのまま返す。
++
++## 入力
++- 参照ファイル: docs/01-design.md §3.1、docs/03-guardrails.md §B
++- 前提タスク: T-01, T-02(完了済み)
++- 前提レビュー: harness/state/reviews/T-02.md(PID 所有権証明: Hwnd→GetWindowThreadProcessId+開始時刻照合。T-02 で確立した方式を再利用する)
++- T-02 実装メモの罠: `Application.Calculation` は Workbooks.Count=0 では設定不可。**Open/Add の後、ScriptBlock 実行前**に Manual を設定する(Codex レビュー承認済みの順序修正)。
++
++## 成果物
++- `skill/scripts/XlsAgent.psm1` の `Invoke-XlsSession` 本実装(T-02 の内部ヘルパーを土台に統合してよい)
++- 使用した COM 定数を `$script:Xl` に追加、`skill/reference/com-constants.md` に追記
++- `tests/Invoke-XlsSession.Tests.ps1`
++
++## 受け入れテスト要点(02-implementation-plan.md §4)
++- (a) 存在しないパスで `Workbooks.Add` になる
++- (b) 別プロセスで開いたファイルを渡すと ReadOnly 例外
++- (c) ScriptBlock 内で `throw` しても Quit されプロセスが残らない
++- (d) 戻り値が透過する
++- 追加: STA 検査、マーカーの作成と削除、-ReadOnly での読み取り専用オープン
++
++## 完了条件(Definition of Done)
++- [ ] `Invoke-Pester tests/Invoke-XlsSession.Tests.ps1` が緑(+T01/T02 回帰緑)
++- [ ] テスト後に EXCEL.EXE が残っていない
++- [ ] guardrails 自己チェック欄に○
++- [ ] Codex レビューで blocking ゼロ
++
++## 実装メモ(Sonnet が記入)
++
++## 自己チェック
++| # | 項目 | ○/× |
++|---|---|---|
++| G-05 | GetActiveObject を使っていない | |
++| G-06 | COM は Invoke-XlsSession 内のみ | |
++| G-07 | Assert-NoOrphanExcel が AfterEach にある | |
++| G-08 | Value2 代入は [object[,]] のみ | |
++| G-11 | 7 専用構文なし | |
++| G-13 | Pester テストがある | |
++| G-15 | テストは緑 | |
+diff --git a/skill/scripts/XlsAgent.psm1 b/skill/scripts/XlsAgent.psm1
+index 001b0a5..0ec2da0 100644
+--- a/skill/scripts/XlsAgent.psm1
++++ b/skill/scripts/XlsAgent.psm1
+@@ -16,6 +16,200 @@ COM は Invoke-XlsSession の ScriptBlock 内、または Invoke-XlsSession 自
+ # 例: $script:Xl.xlCellTypeFormulas, $script:Xl.xlCalculationManual ...
+ $script:Xl = @{}
+ 
++if (-not ('XlsAgent.NativeMethods' -as [type])) {
++    # レビュー指摘対応（T-02 round 1 blocking）: PID の所有権を Hwnd から解決するための P/Invoke。
++    # Get-Process の前後差分だけでは「同時刻にユーザーが起動した別の Excel」を誤って
++    # 自分のものと判定しうるため、Application.Hwnd -> GetWindowThreadProcessId で確実に PID を求める。
++    Add-Type -Namespace XlsAgent -Name NativeMethods -MemberDefinition @'
++[System.Runtime.InteropServices.DllImport("user32.dll")]
++public static extern uint GetWindowThreadProcessId(
++    System.IntPtr hWnd,
++    out uint processId
++);
++'@
++}
++
++function Start-XlsApplication {
++    <#
++    .SYNOPSIS
++        新規 Excel.Application を起動し、ワークブックを開かずに設定できる範囲の初期状態
++        （Visible/DisplayAlerts/ScreenUpdating/EnableEvents/AskToUpdateLinks）を設定して返す。
++        Export しない内部ヘルパー（T-02）。T-03 の Invoke-XlsSession から使う想定の土台。
++    .PARAMETER Visible
++        Excel ウィンドウを表示する（既定は非表示）。
++    .EXAMPLE
++        $app = Start-XlsApplication
++    .NOTES
++        01-design.md §3.1 は初期状態の一項目として Calculation=xlCalculationManual を挙げているが、
++        ここではあえて設定しない（罠、実装メモ参照）。Workbooks.Count が 0 の状態で
++        Application.Calculation に代入すると HRESULT 0x800A03EC で失敗することを実機で確認した。
++        Calculation の設定は Workbooks.Open/Add の後（T-03 の Invoke-XlsSession 内）で行うこと。
++
++        戻り値の COM オブジェクトには、`Application.Hwnd` から `GetWindowThreadProcessId` で解決した PID を
++        `XlsAgentProcessId`、その時点のプロセス開始時刻（UTC Ticks）を `XlsAgentProcessStartTicks` として
++        NoteProperty で付与する（Stop-XlsApplication が強制終了フォールバックの所有権確認に使う。
++        レビュー指摘: PID 差分だけでは同時刻に起動された別の Excel を誤検出しうるため、
++        PID 単独ではなく「PID + 起動時刻」の組で照合する）。
++    #>
++    [CmdletBinding()]
++    param(
++        [switch]$Visible
++    )
++
++    $app = $null
++    try {
++        # G-05: New-Object -ComObject 以外（GetActiveObject 等）で既存プロセスを掴まない。必ず新規プロセス。
++        $app = New-Object -ComObject Excel.Application
++
++        $app.Visible = [bool]$Visible
++        $app.DisplayAlerts = $false
++        $app.ScreenUpdating = $false
++        $app.EnableEvents = $false
++        $app.AskToUpdateLinks = $false
++
++        # 罠: Hwnd はプロセス生成直後は 0 のことがあるため、確定するまで短時間ポーリングする。
++        [uint32]$ownerPid = 0
++        $deadline = (Get-Date).AddSeconds(5)
++        while ($ownerPid -eq 0 -and (Get-Date) -lt $deadline) {
++            if ($app.Hwnd -ne 0) {
++                [void][XlsAgent.NativeMethods]::GetWindowThreadProcessId([IntPtr]$app.Hwnd, [ref]$ownerPid)
++            }
++            if ($ownerPid -eq 0) {
++                Start-Sleep -Milliseconds 100
++            }
++        }
++
++        if ($ownerPid -eq 0) {
++            throw 'Application.Hwnd から PID を解決できませんでした（5 秒待っても Hwnd が確定しない）。'
++        }
++
++        $process = Get-Process -Id $ownerPid -ErrorAction Stop
++        if ($process.ProcessName -ne 'EXCEL') {
++            throw "Hwnd から解決した PID $ownerPid は EXCEL.EXE ではありません（$($process.ProcessName)）。所有権を確認できないため中断します。"
++        }
++
++        # COM オブジェクトも PowerShell 上では PSObject でラップされているため Add-Member で拡張できる。
++        $app | Add-Member -NotePropertyName XlsAgentProcessId -NotePropertyValue ([int]$ownerPid) -Force
++        $app | Add-Member -NotePropertyName XlsAgentProcessStartTicks -NotePropertyValue $process.StartTime.ToUniversalTime().Ticks -Force
++
++        return $app
++    }
++    catch {
++        # レビュー指摘対応（T-02 round 1 should-fix）: 初期化途中で例外になっても
++        # 起動済みの COM オブジェクトを取りこぼさず、Quit -> Release -> GC x2 まで後始末を試みる。
++        if ($null -ne $app) {
++            try { $app.Quit() } catch {}
++            if ([Runtime.InteropServices.Marshal]::IsComObject($app)) {
++                [void][Runtime.InteropServices.Marshal]::ReleaseComObject($app)
++            }
++            [GC]::Collect()
++            [GC]::WaitForPendingFinalizers()
++            [GC]::Collect()
++            [GC]::WaitForPendingFinalizers()
++        }
++        throw "Excel の起動・初期化に失敗したため後始末を試みました: $($_.Exception.Message)"
++    }
++}
++
++function Stop-XlsApplication {
++    <#
++    .SYNOPSIS
++        Start-XlsApplication で起動した Excel.Application を Quit → ReleaseComObject → GC ×2 の順で
++        後始末する。Export しない内部ヘルパー（T-02）。
++    .PARAMETER Application
++        後始末する Excel.Application COM オブジェクト（Start-XlsApplication の戻り値）。
++    .PARAMETER GraceSec
++        Quit 後、プロセスが自然終了するのを待つ猶予秒数（既定 5 秒）。
++    .EXAMPLE
++        Stop-XlsApplication -Application $app
++    .NOTES
++        罠（実機で確認）: Application.Quit() → Marshal.ReleaseComObject（戻り値 0 = 参照は完全に解放済み）
++        → GC.Collect()/WaitForPendingFinalizers ×2 まで行っても、EXCEL.EXE プロセス自体が数十秒〜1 分以上
++        居座るケースを確認した。クライアント側の COM 参照は残っていないため、これはこちら側の参照リークではなく、
++        Excel 側の終了処理が非同期・低優先度で行われるためと見られる。そのため「起動時に特定したその PID」
++        だけを対象に、猶予後は強制終了するフォールバックを持たせている（G-10: 全殺し禁止の対象外。
++        Get-Process EXCEL | Stop-Process のような無差別停止ではなく、自分が起動した PID 1 つに限定）。
++
++        レビュー指摘対応（T-02 round 1 blocking）: 強制終了の直前に、Start-XlsApplication が記録した
++        PID とプロセス開始時刻の**両方**が現在の Get-Process の結果と一致するかを確認する。PID が
++        再利用され別プロセス（ユーザーの Excel を含む）に割り当てられていた場合、開始時刻が一致しないため
++        fail closed（強制終了しない）で throw する。
++    #>
++    [CmdletBinding()]
++    param(
++        [Parameter(Mandatory = $true)]
++        $Application,
++
++        [int]$GraceSec = 5
++    )
++
++    $targetPid = $null
++    $targetStartTicks = $null
++    if ($Application.PSObject.Properties['XlsAgentProcessId']) {
++        $targetPid = $Application.XlsAgentProcessId
++    }
++    if ($Application.PSObject.Properties['XlsAgentProcessStartTicks']) {
++        $targetStartTicks = $Application.XlsAgentProcessStartTicks
++    }
++
++    try {
++        # ワークブックを開いていない前提（T-02 の範囲）。開いている場合の Close は Invoke-XlsSession（T-03）が担う。
++        $Application.Quit()
++    }
++    finally {
++        # レビュー指摘対応（T-02 round 1 should-fix）: Quit() が例外を投げても
++        # Release と GC x2 まで必ず到達させる（try/finally）。
++        if ([Runtime.InteropServices.Marshal]::IsComObject($Application)) {
++            [void][Runtime.InteropServices.Marshal]::ReleaseComObject($Application)
++        }
++
++        # 罠: GC を 1 回だけだと RCW の解放が終わる前に呼び出し元が PID を確認してしまい、
++        # プロセスがまだ残って見えることがある（ファイナライザのタイミング）。2 回連続で確実に潰す。
++        [GC]::Collect()
++        [GC]::WaitForPendingFinalizers()
++        [GC]::Collect()
++        [GC]::WaitForPendingFinalizers()
++    }
++
++    if (-not $targetPid) {
++        return
++    }
++
++    # 罠（.NOTES 参照）: ここまでやってもプロセスが自然に消えるまで数十秒〜1 分以上かかることがある。
++    # テスト・Invoke-XlsSession の呼び出し元を長時間ブロックしないよう、猶予秒数だけ待って、
++    # まだ残っていれば「起動時に特定したその PID」だけを対象に強制終了する。
++    $deadline = (Get-Date).AddSeconds($GraceSec)
++    while ((Get-Date) -lt $deadline) {
++        if (-not (Get-Process -Id $targetPid -ErrorAction SilentlyContinue)) {
++            return
++        }
++        Start-Sleep -Milliseconds 250
++    }
++
++    $target = Get-Process -Id $targetPid -ErrorAction SilentlyContinue
++    if (-not $target) {
++        return
++    }
++
++    # fail closed: PID + 起動時刻が一致しなければ強制終了しない（PID 再利用でユーザーの Excel を
++    # 誤って殺さないため。G-10）。
++    if (-not $targetStartTicks -or $target.StartTime.ToUniversalTime().Ticks -ne $targetStartTicks) {
++        throw "Owned Excel process PID $targetPid の所有権を確認できなかったため強制終了を中止しました（プロセス開始時刻が一致せず、PID 再利用の可能性があります。安全のため何もしません。G-10）。"
++    }
++
++    # レビュー指摘対応（T-02 round 1 should-fix）: 強制終了失敗を握りつぶさず、消滅を確認してから返す。
++    Stop-Process -InputObject $target -Force -ErrorAction Stop
++
++    $confirmDeadline = (Get-Date).AddSeconds(5)
++    while ((Get-Date) -lt $confirmDeadline -and (Get-Process -Id $targetPid -ErrorAction SilentlyContinue)) {
++        Start-Sleep -Milliseconds 100
++    }
++
++    if (Get-Process -Id $targetPid -ErrorAction SilentlyContinue) {
++        throw "Owned Excel process PID $targetPid did not terminate after Stop-Process."
++    }
++}
++
+ function Invoke-XlsSession {
+     <#
+     .SYNOPSIS
+diff --git a/tests/T02.Tests.ps1 b/tests/T02.Tests.ps1
+new file mode 100644
+index 0000000..28b1ee3
+--- /dev/null
++++ b/tests/T02.Tests.ps1
+@@ -0,0 +1,162 @@
++﻿#Requires -Version 5.1
++
++<#
++tests/T02.Tests.ps1
++
++T-02: Excel 起動→終了のスモークテスト。
++XlsAgent.psm1 の内部ヘルパー（Export しない）Start-XlsApplication / Stop-XlsApplication を使い、
++「新規 Excel.Application 起動 → 初期状態設定 → Quit → ReleaseComObject → GC×2 → PID 差分ゼロ」を検証する。
++
++G-06 の T-02 読み替え（タスクカード記載）: Invoke-XlsSession はまだ存在しないため、
++COM はこのテストファイルとモジュール内部ヘルパーに限定してよい。T-03 以降は厳格適用。
++G-10: 全殺し禁止。起動前後の Get-ExcelPids 差分だけを追跡し、差分で見つけた PID だけを扱う。
++#>
++
++$here = Split-Path -Parent $MyInvocation.MyCommand.Path
++. (Join-Path $here 'Common.ps1')
++
++$moduleName = 'XlsAgent'
++$modulePath = Join-Path $here '..\skill\scripts\XlsAgent.psm1'
++
++function Wait-ForExcelPidCondition {
++    <#
++    .SYNOPSIS
++        Get-ExcelPids が -Condition を満たすまで短時間ポーリングする（テスト専用、COM には触れない）。
++        罠: Excel.Application の起動・Quit は COM 呼び出しの戻りとプロセス一覧への反映が同期しないことが
++        あるため、1 回だけ確認すると環境によってはフレーキーになる。
++    .PARAMETER Condition
++        現在の PID 配列を受け取り $true/$false を返す scriptblock。
++    #>
++    [CmdletBinding()]
++    param(
++        [Parameter(Mandatory = $true)]
++        [scriptblock]$Condition,
++
++        [int]$TimeoutSec = 15
++    )
++
++    $deadline = (Get-Date).AddSeconds($TimeoutSec)
++    $current = Get-ExcelPids
++    while (-not (& $Condition $current)) {
++        if ((Get-Date) -ge $deadline) {
++            break
++        }
++        Start-Sleep -Milliseconds 200
++        $current = Get-ExcelPids
++    }
++    return $current
++}
++
++Describe 'Excel launch/quit smoke test (T-02)' {
++
++    BeforeEach {
++        Import-Module $modulePath -Force
++        $script:ModuleRef = Get-Module $moduleName
++        $script:BaselinePids = Get-ExcelPids
++    }
++
++    AfterEach {
++        # 万一テスト自体が失敗して $app を残していても、ここで最終的に残骸ゼロを確認する。
++        Assert-NoOrphanExcel -Baseline $script:BaselinePids
++        Remove-Module $moduleName -ErrorAction SilentlyContinue
++    }
++
++    It 'exports only the 8 public functions; Start-XlsApplication/Stop-XlsApplication stay private' {
++        $exported = @(Get-Command -Module $moduleName | Select-Object -ExpandProperty Name)
++        $exported -contains 'Start-XlsApplication' | Should Be $false
++        $exported -contains 'Stop-XlsApplication' | Should Be $false
++
++        # モジュールスコープには存在する（T-01 と同じパターンで & (Get-Module) 経由で確認）
++        $startFn = & $script:ModuleRef { Get-Command Start-XlsApplication -ErrorAction SilentlyContinue }
++        $stopFn = & $script:ModuleRef { Get-Command Stop-XlsApplication -ErrorAction SilentlyContinue }
++        $startFn | Should Not Be $null
++        $stopFn | Should Not Be $null
++    }
++
++    It 'launches exactly one new EXCEL.EXE process with the designed initial state, then Stop-XlsApplication leaves no orphan' {
++        $newPids = @()
++        $app = $null
++
++        try {
++            $app = & $script:ModuleRef { Start-XlsApplication }
++
++            $afterStart = Wait-ForExcelPidCondition -Condition {
++                param($pidsNow)
++                @($pidsNow | Where-Object { $script:BaselinePids -notcontains $_ }).Count -ge 1
++            }
++            $newPids = @($afterStart | Where-Object { $script:BaselinePids -notcontains $_ })
++
++            # 新規プロセスが（他の何かと重複せず）ちょうど1つ増えていること
++            $newPids.Count | Should Be 1
++
++            # 01-design.md §3.1 の初期状態のうち、ワークブックなしで設定できるもの
++            # （Calculation はワークブックが 1 つも無いと設定できない罠があるため対象外。実装メモ参照）
++            $app.Visible | Should Be $false
++            $app.DisplayAlerts | Should Be $false
++            $app.ScreenUpdating | Should Be $false
++            $app.EnableEvents | Should Be $false
++            $app.AskToUpdateLinks | Should Be $false
++        }
++        finally {
++            if ($app) {
++                & $script:ModuleRef { param($a) Stop-XlsApplication -Application $a } $app
++                $app = $null
++            }
++        }
++
++        # Quit -> ReleaseComObject -> GC x2 の後、起動した PID が消えていること（G-10: 差分の PID だけ見る）
++        $afterStop = Wait-ForExcelPidCondition -Condition {
++            param($pidsNow)
++            @($pidsNow | Where-Object { $newPids -contains $_ }).Count -eq 0
++        }
++        @($afterStop | Where-Object { $newPids -contains $_ }).Count | Should Be 0
++
++        # PID 差分ゼロ（ベースラインに対して残骸なし）。
++        # 罠: 強制終了の直後、Office 側の裏プロセス（次回起動を早めるための一時的な EXCEL.EXE らしきもの）が
++        # 一瞬だけプロセス一覧に現れて数百ms 以内に消えることが実機で観測された。単発チェックだとフレーキーに
++        # なるため、ここも短時間ポーリングしてベースラインへ収束するのを待ってから最終判定する。
++        $settled = Wait-ForExcelPidCondition -Condition {
++            param($pidsNow)
++            @($pidsNow | Where-Object { $script:BaselinePids -notcontains $_ }).Count -eq 0
++        } -TimeoutSec 10
++        @($settled | Where-Object { $script:BaselinePids -notcontains $_ }).Count | Should Be 0
++    }
++
++    It 'leaves no orphan even when the caller throws between launch and Stop-XlsApplication' {
++        $newPids = @()
++        $threw = $false
++
++        try {
++            $app = & $script:ModuleRef { Start-XlsApplication }
++            $afterStart = Wait-ForExcelPidCondition -Condition {
++                param($pidsNow)
++                @($pidsNow | Where-Object { $script:BaselinePids -notcontains $_ }).Count -ge 1
++            }
++            $newPids = @($afterStart | Where-Object { $script:BaselinePids -notcontains $_ })
++
++            try {
++                throw 'simulated failure between launch and teardown'
++            }
++            finally {
++                # 呼び出し側が finally で確実に片付ける、という T-03 の契約をここで先取りして確認する。
++                & $script:ModuleRef { param($a) Stop-XlsApplication -Application $a } $app
++                $app = $null
++            }
++        }
++        catch {
++            $threw = $true
++        }
++
++        $threw | Should Be $true
++
++        $afterStop = Wait-ForExcelPidCondition -Condition {
++            param($pidsNow)
++            @($pidsNow | Where-Object { $newPids -contains $_ }).Count -eq 0
++        }
++        @($afterStop | Where-Object { $newPids -contains $_ }).Count | Should Be 0
++    }
++
++    AfterAll {
++        Remove-Module $moduleName -ErrorAction SilentlyContinue
++    }
++}
