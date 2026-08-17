@@ -6,7 +6,7 @@
 
 | 名前 | 値 | 用途 | 確認 |
 |---|---|---|---|
-| xlCellTypeFormulas | -4123 | SpecialCells | |
+| xlCellTypeFormulas | -4123 | SpecialCells | 2026-08-17（T-08 Get-XlsModel、実機。`Range.SpecialCells(-4123)` で数式セルのみの Range を取得、ヒットなしは HRESULT 0x800A03EC 例外になることを確認） |
 | xlErrors | 16 | SpecialCells 第 2 引数 | |
 | xlCalculationManual | -4135 | Application.Calculation | 2026-08-17（T-03 Invoke-XlsSession、実機） |
 | xlCalculationAutomatic | -4105 | Application.Calculation | 2026-08-17（T-04 Save-XlsWorkbook、実機。Automatic のまま保存すると xl/workbook.xml の calcPr から calcMode 属性が省略されることまで確認） |
@@ -15,7 +15,7 @@
 | xlOpenXMLTemplateMacroEnabled | 53 | SaveAs .xltm | 2026-08-17（T-04 Save-XlsWorkbook、実機。SaveAs 直後の Workbook.FileFormat で確認） |
 | xlOpenXMLTemplate | 54 | SaveAs .xltx | 2026-08-17（T-04 Save-XlsWorkbook、実機。SaveAs 直後の Workbook.FileFormat で確認。Workbooks.Open で開き直すとテンプレートから新規ブックが生成されるため、reopen では確認できない罠あり） |
 | xlCSV | 6 | SaveAs .csv | 2026-08-17（T-04 Save-XlsWorkbook、実機。SaveAs 直後の Workbook.FileFormat とファイル内容で確認） |
-| xlExcelLinks | 1 | LinkSources | |
+| xlExcelLinks | 1 | LinkSources | 2026-08-17（T-08 Get-XlsModel、実機。`Workbook.LinkSources(1)` が未解決の外部リンク先パスを 1-based string[] で返す（リンクなしは $null）ことを確認） |
 | xlSrcRange | 1 | ListObjects.Add | |
 | xlYes | 1 | ListObjects.Add HasHeaders | |
 | xlCenter | -4108 | HorizontalAlignment | |

@@ -44,6 +44,17 @@ $script:Xl = @{
     xlErrName  = -2146826259
     xlErrNum   = -2146826252
     xlErrNA    = -2146826246
+
+    # T-08 Get-XlsModel: Range.SpecialCells(Type) の Type 引数。実機で確認済み（実装メモ参照）:
+    # ヒットなし（範囲内に数式セルが 1 つもない）だと HRESULT 0x800A03EC で例外を投げるため、
+    # 呼び出し側（Get-XlsFormulaCellKeySet）で握りつぶす（S-7）。
+    xlCellTypeFormulas = -4123
+
+    # T-08 Get-XlsModel: Workbook.LinkSources(Type) の Type 引数（Excel 形式の外部参照リンク）。
+    # 実機で確認済み（実装メモ参照）: 未解決の外部リンク（存在しないブックを指す数式）を含む
+    # ワークブックを保存・再オープンしても Formula は消えず、LinkSources は解決できないリンク先の
+    # パスを 1-based の string[] で返す（対応するセルの Value2 は #REF! エラーになる）。
+    xlExcelLinks = 1
 }
 
 # T-06 Get-XlsRange: $script:Xl の xlErr* 値 -> 表示文字列。ConvertFrom-XlsValue2 が参照する
@@ -884,22 +895,279 @@ function Get-XlsOverview {
     }
 }
 
+function ConvertTo-XlsColumnLetter {
+    <#
+    .SYNOPSIS
+        1-based の列番号を Excel の列文字（A, B, ..., Z, AA, ...）に変換する。COM は触らない純粋関数。
+        Get-XlsModel の内部関数（T-08）。Export しない。
+    .PARAMETER Column
+        1-based の列番号（1 以上）。
+    .EXAMPLE
+        ConvertTo-XlsColumnLetter -Column 28
+    .NOTES
+        26 進数風の桁上がり（0 が存在しない点が通常の 26 進数と異なる、Excel 列番号の性質）で計算する。
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$Column
+    )
+
+    if ($Column -lt 1) {
+        throw "Column must be 1 or greater (got $Column)."
+    }
+
+    $letters = ''
+    $n = $Column
+    while ($n -gt 0) {
+        $remainder = ($n - 1) % 26
+        $letters = [string]([char](65 + $remainder)) + $letters
+        # 罠（実機確認）: PowerShell の [int] キャストは切り捨てではなく四捨五入（丸め）を行うため、
+        # 例えば (26-1)/26 = 0.9615... を [int] キャストすると 1 になってしまい、26 の倍数の列
+        # （26=Z, 52=AZ, 702=ZZ 等）で 1 桁多い誤った列文字（Z→AZ、AZ→BZ 等）を生成する。
+        # [Math]::Floor で明示的に切り捨てる（$n は常に正なので Floor と Truncate は同じ結果）。
+        $n = [int][Math]::Floor(($n - 1) / 26)
+    }
+    return $letters
+}
+
+function Get-XlsFormulaCellKeySet {
+    <#
+    .SYNOPSIS
+        Range 内の数式セルの絶対座標（シート上の行, 列）を "row,col" 文字列の HashSet として返す。
+        ヒットなし（範囲内に数式セルが 1 つもない）は空集合として扱う。
+        ConvertTo-XlsModelCellList の内部関数（T-08）。COM は Range オブジェクトの読み取りのみ
+        （Invoke-XlsSession の ScriptBlock 内から呼ばれる前提。G-06）。Export しない。
+    .PARAMETER RangeObj
+        対象の Range COM オブジェクト。
+    .EXAMPLE
+        Get-XlsFormulaCellKeySet -RangeObj $ws.Range('A1:D10')
+    .NOTES
+        実装判断（実装メモに詳細）: 数式セルの判定に Range.Formula の '=' 始まり判定ではなく
+        SpecialCells(xlCellTypeFormulas) を使う（実機確認: 先頭にアポストロフィで強制的にテキスト化
+        したセル（例 `'=5`）は Value2/Formula とも "=5" を返すが HasFormula は False であり、
+        '=' 始まり判定だとこれを誤って数式と判定してしまう）。
+        SpecialCells がヒットなしで例外（HRESULT 0x800A03EC、実機確認）を投げるのは、範囲内に
+        数式セルが 1 つもないという正常な状態を表すだけなので、ここで握りつぶして空集合を返す（S-7）。
+        SpecialCells の戻り値の Area.Row/Area.Column は（実機確認）シート上の絶対座標であり、
+        呼び出し元の Range が UsedRange の一部やシート全体のどこにあっても変わらない。
+        Areas 内の行・列を展開する二重ループは COM 呼び出しを含まない（Area.Rows.Count/
+        Area.Columns.Count は各 Area につき 1 回ずつ読むだけ）ため、G-06 の「セル単位ループを避ける」
+        方針には反しない（実際にセル単位で COM へ問い合わせているわけではない）。
+
+        罠（実機確認、実装メモ参照）: `[System.Collections.Generic.HashSet[string]]` は
+        `IEnumerable` を実装しているため、単項カンマなしの `return $keySet` は T-03/T-06 で確立済みの
+        「PowerShell の出力ストリームは配列・列挙可能オブジェクトを 1 段階展開する」罠をそのまま踏む。
+        要素数 0（数式セルなし）なら呼び出し元で `$null` に、要素数 1 なら中身の文字列 1 個に
+        化けてしまい（`.Contains` が `string.Contains`（部分一致）に化けて偶然一部のテストだけ
+        通ってしまうという厄介な壊れ方をした）、2 個以上なら `object[]` になって `.Contains` メソッド
+        自体が失われる。単項カンマで 1 段階だけ包み直し、`HashSet` を 1 個のオブジェクトとして
+        そのまま呼び出し元に渡す（Invoke-XlsSession や Clear-XlsOrphans と同じ既存の確立済みパターン）。
+
+        レビュー指摘対応（T-08 round 1 should-fix）: catch を無条件にすると、S-7 が想定する「数式
+        セルなし」という正常系（HRESULT 0x800A03EC の `COMException`）以外の COM 障害や予期しない
+        実装エラーまで「数式セルなし」として握りつぶしてしまい、後続処理が成功すると実際には数式が
+        あるのに `formula = $null` の不完全なモデルを正常結果として返しかねない。`[COMException]` かつ
+        `HResult` が実機確認済みの `-2146827284`（0x800A03EC）の場合だけ空集合を返し、それ以外は
+        re-throw する（S-7 は「ヒットなし例外を握りつぶす」であって「あらゆる例外を握りつぶす」ではない）。
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        $RangeObj
+    )
+
+    $keySet = New-Object 'System.Collections.Generic.HashSet[string]'
+
+    try {
+        $formulaRange = $RangeObj.SpecialCells($script:Xl.xlCellTypeFormulas)
+    }
+    catch [System.Runtime.InteropServices.COMException] {
+        # S-7: SpecialCells はヒットなし（範囲内に数式セルが 1 つもない）で HRESULT 0x800A03EC の
+        # COMException を投げる（実機確認）。この既知の正常系だけを握りつぶす。
+        if ($_.Exception.HResult -eq -2146827284) {
+            return , $keySet
+        }
+        throw
+    }
+
+    foreach ($area in $formulaRange.Areas) {
+        $areaRow = [int]$area.Row
+        $areaCol = [int]$area.Column
+        $areaRowCount = [int]$area.Rows.Count
+        $areaColCount = [int]$area.Columns.Count
+
+        for ($ro = 0; $ro -lt $areaRowCount; $ro++) {
+            for ($co = 0; $co -lt $areaColCount; $co++) {
+                [void]$keySet.Add(('{0},{1}' -f ($areaRow + $ro), ($areaCol + $co)))
+            }
+        }
+    }
+
+    return , $keySet
+}
+
+function ConvertTo-XlsModelCellList {
+    <#
+    .SYNOPSIS
+        Range から Value2・Formula・NumberFormat を一括取得し、Get-XlsModel の cells 配列
+        （{ address, formula, value2, numberFormat } の配列）を組み立てる。空セル（値も数式もない）は
+        含めない。Get-XlsModel の内部関数（T-08）。COM は Range オブジェクトのプロパティ読み取りのみ
+        （Invoke-XlsSession の ScriptBlock 内から呼ばれる前提。G-06）。Export しない。
+    .PARAMETER RangeObj
+        対象の Range COM オブジェクト（シート全体の UsedRange、または -Range で指定された範囲）。
+    .PARAMETER Date1904
+        対象ワークブックが 1904 日付体系かどうか（ConvertFrom-XlsValue2 にそのまま渡す）。
+    .PARAMETER FormulasOnly
+        指定した場合、数式セルのみを含める。
+    .EXAMPLE
+        ConvertTo-XlsModelCellList -RangeObj $ws.UsedRange -Date1904:$false
+    .NOTES
+        実装判断（詳細は実装メモ）:
+          - Value2 と Formula は範囲全体を 1 回ずつ一括取得する（T-06 の ConvertFrom-XlsRangeToRows と
+            同型。単一セル範囲がスカラーで返る罠も同様に吸収する）。数式セルの判定は
+            Get-XlsFormulaCellKeySet が作る HashSet への参照だけで行い、追加の COM 呼び出しを発生
+            させない。
+          - NumberFormat は T-06 の 2 段構え（一括 → 混在時のみセル単位）を再利用する。ただし
+            Get-XlsRange は日付判定にしか NumberFormat を使わないため [double] セルだけにセル単位
+            読み取りを絞っていたのに対し、Get-XlsModel は numberFormat 自体を出力フィールドとして
+            返す契約のため、混在時は「cells に含める」と決まった各セルについて型を問わずセル単位で
+            読む（この関数だけの実装判断。T-06 のヘルパーは変更していない）。
+          - 空セル（Value2 が $null かつ数式セルでない）は cells に含めない（タスクカード指定の方針、
+            サイズ抑制）。数式セルは Value2 が $null であっても常に含める（実際には発生しない想定だが
+            安全側）。
+          - -FormulasOnly 指定時も Value2/Formula の一括取得自体は範囲全体に対して 1 回ずつ行う
+            （不要な行・列だけを後段でメモリ上スキップする）。NumberFormat のセル単位フォールバックは
+            「cells に含める」と決まった数式セルだけに限られるため、-FormulasOnly は主に出力サイズと
+            NumberFormat のセル単位呼び出し回数を削減する（実装メモ参照）。
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        $RangeObj,
+
+        [switch]$Date1904,
+
+        [switch]$FormulasOnly
+    )
+
+    $formulaKeys = Get-XlsFormulaCellKeySet -RangeObj $RangeObj
+
+    $rawValue2 = $RangeObj.Value2
+    $rawFormula = $RangeObj.Formula
+    $topRow = [int]$RangeObj.Row
+    $topCol = [int]$RangeObj.Column
+
+    $bulkFormat = $RangeObj.NumberFormat
+    $useUniformFormat = ($null -ne $bulkFormat -and $bulkFormat -isnot [DBNull])
+
+    $cells = New-Object System.Collections.ArrayList
+
+    if ($rawValue2 -isnot [Array]) {
+        # 単一セル範囲（Value2/Formula がスカラーで返る既知の罠。T-06 と同型）。
+        $isFormula = $formulaKeys.Contains(('{0},{1}' -f $topRow, $topCol))
+        $included = ($null -ne $rawValue2) -or $isFormula
+
+        if ((-not $FormulasOnly -or $isFormula) -and $included) {
+            $nf = if ($useUniformFormat) { $bulkFormat } else { $RangeObj.NumberFormat }
+            [void]$cells.Add([PSCustomObject][ordered]@{
+                address      = (ConvertTo-XlsColumnLetter -Column $topCol) + $topRow
+                formula      = if ($isFormula) { [string]$rawFormula } else { $null }
+                value2       = ConvertFrom-XlsValue2 -Value2 $rawValue2 -NumberFormat $nf -Date1904:$Date1904
+                numberFormat = $nf
+            })
+        }
+
+        return , $cells.ToArray()
+    }
+
+    $rowLower = $rawValue2.GetLowerBound(0)
+    $rowUpper = $rawValue2.GetUpperBound(0)
+    $colLower = $rawValue2.GetLowerBound(1)
+    $colUpper = $rawValue2.GetUpperBound(1)
+
+    for ($r = $rowLower; $r -le $rowUpper; $r++) {
+        $absRow = $topRow + ($r - $rowLower)
+        for ($c = $colLower; $c -le $colUpper; $c++) {
+            $absCol = $topCol + ($c - $colLower)
+            $isFormula = $formulaKeys.Contains(('{0},{1}' -f $absRow, $absCol))
+
+            if ($FormulasOnly -and -not $isFormula) {
+                continue
+            }
+
+            $value2Raw = $rawValue2[$r, $c]
+            $included = ($null -ne $value2Raw) -or $isFormula
+            if (-not $included) {
+                continue
+            }
+
+            if ($useUniformFormat) {
+                $nf = $bulkFormat
+            }
+            else {
+                # 罠（T-06 と同型）: Range.Cells.Item(r, c) は範囲左上を (1,1) とする相対 1-based
+                # インデックス。Value2 の 2 次元配列の添字（r, c、常に 1-based）とそのまま一致する。
+                $nf = $RangeObj.Cells.Item($r, $c).NumberFormat
+            }
+
+            $formulaText = if ($isFormula) { [string]$rawFormula[$r, $c] } else { $null }
+
+            [void]$cells.Add([PSCustomObject][ordered]@{
+                address      = (ConvertTo-XlsColumnLetter -Column $absCol) + $absRow
+                formula      = $formulaText
+                value2       = ConvertFrom-XlsValue2 -Value2 $value2Raw -NumberFormat $nf -Date1904:$Date1904
+                numberFormat = $nf
+            })
+        }
+    }
+
+    return , $cells.ToArray()
+}
+
 function Get-XlsModel {
     <#
     .SYNOPSIS
-        数式（Formula）と値（Value2）を 1 回の読み取りでまとめて返す。
+        数式（Formula）と値（Value2）を 1 回の読み取りでまとめて返す（xlsx スキルの「2 回ロード」の
+        代替。01-design.md §3.4）。
     .PARAMETER Path
         対象ワークブックのパス。
     .PARAMETER Sheet
-        対象シート名（省略時は全シート）。
+        対象シート名（省略時は全シート、ワークブックのタブ順）。指定した場合は指定した順序・
+        指定したシートのみを出す。存在しないシート名があれば例外にする。
     .PARAMETER Range
-        対象範囲（省略時はシート全体の UsedRange）。
+        対象範囲（A1 形式。省略時はシート全体の UsedRange）。-Sheet で複数シートを指定した場合、
+        同じ範囲アドレスを各シートに適用する。無効なアドレスは次の一手が分かる例外にする。
     .PARAMETER FormulasOnly
-        数式セルのみを返す。
+        指定した場合、各シートの cells を数式セルのみに絞る（tables/protected/usedRange 等の
+        シートメタデータには影響しない）。
     .PARAMETER AsJson
-        オブジェクトではなく JSON 文字列で返す。
+        指定した場合、オブジェクトではなく JSON 文字列で返す。
     .EXAMPLE
         Get-XlsModel -Path 'C:\tmp\book.xlsx' -FormulasOnly
+    .EXAMPLE
+        Get-XlsModel -Path 'C:\tmp\book.xlsx' -Sheet 'Summary' -Range 'A1:D10' -AsJson
+    .NOTES
+        内部で `Invoke-XlsSession -ReadOnly` を使う（呼び出し側は COM を見ない。G-06）。
+
+        戻り値の形（01-design.md §3.4）:
+          workbook: { path, sheets（ワークブック内の全シート名。-Sheet の絞り込みの影響を受けない）,
+                      names（ワークブックレベルの名前定義。name, refersTo）,
+                      links（外部参照リンクのリンク元パス。なければ空配列）, version, build }
+          sheets: -Sheet で絞り込んだ（省略時は全）シートそれぞれについて
+                  { name, usedRange（シート全体の UsedRange。-Range の絞り込みの影響を受けない）,
+                    tables（ListObjects の name, range）, protected（ProtectContents）,
+                    cells（address, formula, value2, numberFormat の配列。空セルは含めない） }
+
+        実装判断（詳細は実装メモ）:
+          - names: `Workbook.Names` にはシートスコープの名前も `"SheetName!Name"` という形式で
+            `.Name` に現れる（実機確認）。ワークブックレベルの名前だけを含めるため、`.Name` に `!`
+            を含むものは除外する（Excel はシート名に `!` を許可しないため、安全な判定式）。
+          - links: `Workbook.LinkSources(xlExcelLinks)` は 1-based の string[] または $null（実機確認）。
+            $null は空配列にする。
+          - version/build: `Application.Version`/`Application.Build` をそのまま文字列化する。
+          - usedRange は常にシート全体の UsedRange を報告する（-Range はあくまで cells の絞り込み用途で、
+            シートの実際の使用範囲を隠さないため）。
     #>
     [CmdletBinding()]
     param(
@@ -915,7 +1183,102 @@ function Get-XlsModel {
         [switch]$AsJson
     )
 
-    throw 'Get-XlsModel は未実装です（T-08 で実装予定）。'
+    $model = Invoke-XlsSession -Path $Path -ReadOnly -ScriptBlock {
+        param($app, $wb)
+
+        $availableNames = @($wb.Worksheets | ForEach-Object { $_.Name })
+
+        $targetSheets = New-Object System.Collections.ArrayList
+        if ($Sheet) {
+            foreach ($name in $Sheet) {
+                if ($availableNames -notcontains $name) {
+                    throw "Sheet '$name' not found in '$Path'. Available sheets: $($availableNames -join ', ')."
+                }
+                [void]$targetSheets.Add($wb.Worksheets.Item($name))
+            }
+        }
+        else {
+            foreach ($ws in $wb.Worksheets) {
+                [void]$targetSheets.Add($ws)
+            }
+        }
+
+        $date1904 = [bool]$wb.Date1904
+
+        $namesOut = New-Object System.Collections.ArrayList
+        foreach ($n in $wb.Names) {
+            # 実装判断（.NOTES 参照）: シートスコープの名前は Name が "SheetName!Name" になる。
+            # ワークブックレベルの名前だけを残す。
+            if ([string]$n.Name -match '!') {
+                continue
+            }
+            [void]$namesOut.Add([PSCustomObject][ordered]@{
+                name     = [string]$n.Name
+                refersTo = [string]$n.RefersTo
+            })
+        }
+
+        $linksOut = New-Object System.Collections.ArrayList
+        $rawLinks = $wb.LinkSources($script:Xl.xlExcelLinks)
+        if ($null -ne $rawLinks) {
+            foreach ($link in $rawLinks) {
+                [void]$linksOut.Add([string]$link)
+            }
+        }
+
+        $sheetsOut = New-Object System.Collections.ArrayList
+        foreach ($ws in $targetSheets) {
+            if ($Range) {
+                try {
+                    $rangeObj = $ws.Range($Range)
+                }
+                catch {
+                    throw "Invalid range address '$Range' on worksheet '$($ws.Name)'. Check the A1-style address (e.g. 'A1' or 'A1:C10'). Excel reported: $($_.Exception.Message)"
+                }
+            }
+            else {
+                $rangeObj = $ws.UsedRange
+            }
+
+            $cellsOut = ConvertTo-XlsModelCellList -RangeObj $rangeObj -Date1904:$date1904 -FormulasOnly:$FormulasOnly
+
+            $tablesOut = New-Object System.Collections.ArrayList
+            foreach ($lo in $ws.ListObjects) {
+                [void]$tablesOut.Add([PSCustomObject][ordered]@{
+                    name  = [string]$lo.Name
+                    range = [string]$lo.Range.Address(0, 0)
+                })
+            }
+
+            [void]$sheetsOut.Add([PSCustomObject][ordered]@{
+                name      = [string]$ws.Name
+                usedRange = [string]$ws.UsedRange.Address(0, 0)
+                tables    = $tablesOut.ToArray()
+                protected = [bool]$ws.ProtectContents
+                cells     = $cellsOut
+            })
+        }
+
+        $workbookOut = [PSCustomObject][ordered]@{
+            path    = $Path
+            sheets  = $availableNames
+            names   = $namesOut.ToArray()
+            links   = $linksOut.ToArray()
+            version = [string]$app.Version
+            build   = [string]$app.Build
+        }
+
+        return [PSCustomObject][ordered]@{
+            workbook = $workbookOut
+            sheets   = $sheetsOut.ToArray()
+        }
+    }
+
+    if ($AsJson) {
+        return ConvertTo-Json -InputObject $model -Depth 10
+    }
+
+    return $model
 }
 
 function Split-XlsNumberFormatSections {
