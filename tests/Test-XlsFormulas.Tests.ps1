@@ -34,6 +34,13 @@ Save-XlsWorkbook を呼ぶと、ごく稀に最後の 1 セルが保存後のフ
 CalculateFullRebuild 不足が原因ではない）。単純な Start-Sleep での「一呼吸置く」対処では再現を
 安定して防げなかった（実装メモに検証記録あり）ため、Set-XlsFormulaVerified が「書き込み直後に
 読み戻して一致することを確認し、一致しなければ再試行する」防御的な書き込みを行う。
+
+T-11（外部リンク検出と refused / -Force）の受け入れテストは末尾の Context
+'external link refused / -Force (T-11)' に追加した（このファイルへの追加。分割は実装判断で
+既存ファイル追加を選択）。上記の Set-XlsFormulaVerified / Set-XlsValue2Verified /
+New-XlsxWithStaleFormulaCache をそのまま再利用し、外部リンク fixture の作成手法自体は
+T-08 Get-XlsModel.Tests.ps1 で確立したもの（存在しないパスへの数式リンクを Invoke-XlsSession 内で
+作成、保存は Save-XlsWorkbook 経由）を踏襲する。
 #>
 
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -433,6 +440,167 @@ Describe 'Test-XlsFormulas (T-10)' {
 
             $errorSeen | Should Not Be $null
             $errorSeen.Exception.Message | Should Match 'File not found'
+        }
+    }
+
+    Context 'external link refused / -Force (T-11)' {
+        # harness/state/tasks/T-11.md の受け入れテスト要点:
+        #   - 存在しない外部リンクを持つブックで refused が返り、reason/links キーが契約どおり。
+        #   - refused のとき再計算が走っていないこと（stale キャッシュを仕込み、-Force との対比で確認）。
+        #   - -Force で errors_found/success（リンクセルの #REF! を含む通常の検証結果）。
+        #   - リンクなしブックは従来どおり（上の Context 群が回帰として機能。ここでは重複させない）。
+        # 外部リンク fixture の作成手法は T-08 Get-XlsModel.Tests.ps1 で確立したもの
+        # （存在しないパスへの数式リンク "='<dir>\[<file>]<sheet>'!<cell>" を Invoke-XlsSession 内で
+        # 作成し、保存は Save-XlsWorkbook 経由）を再利用する。
+
+        It 'returns a refused result with reason/links, and its shape omits every recalculation-derived key (G-04 contract lock for the refused shape)' {
+            $path = New-TempXlsxPath
+
+            Invoke-XlsSession -Path $path -ScriptBlock {
+                param($app, $wb)
+                $ws = $wb.Worksheets.Item(1)
+                Set-XlsFormulaVerified -Range $ws.Range('A1') -Formula "='C:\NoSuchFolderXYZ_T11\[Other.xlsx]Sheet1'!A1"
+                Save-XlsWorkbook -Workbook $wb -Path $path
+            }
+
+            $result = Test-XlsFormulas -Path $path
+
+            $result.status | Should Be 'refused'
+            $result.reason | Should Be 'external links present'
+            (@($result.links) -join ';') | Should Match ([regex]::Escape('NoSuchFolderXYZ_T11'))
+
+            # refused は success/errors_found とは別の形（total_formulas 等を含まない）。
+            # CalculateFullRebuild を経て初めて埋まる情報が結果に一切現れないことを固定することで、
+            # 「refused のときは再計算していない」ことを構造的に裏付ける（受け入れ要点）。
+            (($result.PSObject.Properties.Name | Sort-Object) -join ',') | Should Be 'links,reason,status'
+        }
+
+        It '-AsJson returns the refused shape with the same key set (G-04 style key-set lock)' {
+            $path = New-TempXlsxPath
+
+            Invoke-XlsSession -Path $path -ScriptBlock {
+                param($app, $wb)
+                $ws = $wb.Worksheets.Item(1)
+                Set-XlsFormulaVerified -Range $ws.Range('A1') -Formula "='C:\NoSuchFolderXYZ_T11\[Other.xlsx]Sheet1'!A1"
+                Save-XlsWorkbook -Workbook $wb -Path $path
+            }
+
+            $json = Test-XlsFormulas -Path $path -AsJson
+            $parsed = $json | ConvertFrom-Json
+
+            $parsed.status | Should Be 'refused'
+            $parsed.reason | Should Be 'external links present'
+            (($parsed.PSObject.Properties.Name | Sort-Object) -join ',') | Should Be 'links,reason,status'
+            ($parsed.links -is [System.Array]) | Should Be $true
+            $parsed.links.Count | Should BeGreaterThan 0
+            ($parsed.links -join ';') | Should Match ([regex]::Escape('NoSuchFolderXYZ_T11'))
+        }
+
+        It 'does not refuse when every external link source resolves to an existing file (links present but none missing)' {
+            $targetPath = New-TempXlsxPath
+            $mainPath = New-TempXlsxPath
+
+            Invoke-XlsSession -Path $targetPath -ScriptBlock {
+                param($app, $wb)
+                $ws = $wb.Worksheets.Item(1)
+                Set-XlsValue2Verified -Range $ws.Range('A1') -Value2 (New-XlsSingleCellArray -Value 42.0)
+                Save-XlsWorkbook -Workbook $wb -Path $targetPath
+            }
+
+            $targetDir = Split-Path -Parent $targetPath
+            $targetLeaf = Split-Path -Leaf $targetPath
+
+            Invoke-XlsSession -Path $mainPath -ScriptBlock {
+                param($app, $wb)
+                $ws = $wb.Worksheets.Item(1)
+                Set-XlsFormulaVerified -Range $ws.Range('A1') -Formula "='$targetDir\[$targetLeaf]Sheet1'!A1"
+                Save-XlsWorkbook -Workbook $wb -Path $mainPath
+            }
+
+            $result = Test-XlsFormulas -Path $mainPath
+
+            $result.status | Should Not Be 'refused'
+            $result.status | Should Be 'success'
+            $result.total_formulas | Should Be 1
+            $result.total_errors | Should Be 0
+        }
+
+        It 'includes both existing and missing external link sources in links when a workbook mixes the two (refuses because at least one is missing)' {
+            $existingTargetPath = New-TempXlsxPath
+            $missingTargetPath = Join-Path (Split-Path -Parent $existingTargetPath) 'NoSuchFolderXYZ_T11_mixed\Other.xlsx'
+            $mainPath = New-TempXlsxPath
+
+            Invoke-XlsSession -Path $existingTargetPath -ScriptBlock {
+                param($app, $wb)
+                $ws = $wb.Worksheets.Item(1)
+                Set-XlsValue2Verified -Range $ws.Range('A1') -Value2 (New-XlsSingleCellArray -Value 7.0)
+                Save-XlsWorkbook -Workbook $wb -Path $existingTargetPath
+            }
+
+            $existingDir = Split-Path -Parent $existingTargetPath
+            $existingLeaf = Split-Path -Leaf $existingTargetPath
+            $missingDir = Split-Path -Parent $missingTargetPath
+            $missingLeaf = Split-Path -Leaf $missingTargetPath
+
+            Invoke-XlsSession -Path $mainPath -ScriptBlock {
+                param($app, $wb)
+                $ws = $wb.Worksheets.Item(1)
+                Set-XlsFormulaVerified -Range $ws.Range('A1') -Formula "='$existingDir\[$existingLeaf]Sheet1'!A1"
+                Set-XlsFormulaVerified -Range $ws.Range('B1') -Formula "='$missingDir\[$missingLeaf]Sheet1'!A1"
+                Save-XlsWorkbook -Workbook $wb -Path $mainPath
+            }
+
+            $result = Test-XlsFormulas -Path $mainPath
+
+            # 存在するリンク（A1 が指す既存ファイル）と欠損リンク（B1 が指す不在ファイル）が
+            # 混在していても refused（少なくとも 1 つ欠損があれば refused）になり、links には
+            # 「欠損分だけ」ではなく両方が含まれる（実装判断の回帰。round 1 レビュー nit 対応）。
+            $result.status | Should Be 'refused'
+            $result.links.Count | Should Be 2
+            (($result.links | Sort-Object) -join '|') |
+                Should Be ((@($existingTargetPath, $missingTargetPath) | Sort-Object) -join '|')
+        }
+
+        It '-Force skips the refused check and performs a real recalculation, revealing a stale-cache error' {
+            $path = New-TempXlsxPath
+
+            Invoke-XlsSession -Path $path -ScriptBlock {
+                param($app, $wb)
+                $ws = $wb.Worksheets.Item(1)
+                Set-XlsValue2Verified -Range $ws.Range('A1') -Value2 (New-XlsSingleCellArray -Value 5.0)
+                Set-XlsFormulaVerified -Range $ws.Range('A2') -Formula '=100/A1'
+                Set-XlsFormulaVerified -Range $ws.Range('B1') -Formula "='C:\NoSuchFolderXYZ_T11b\[Other.xlsx]Sheet1'!A1"
+                Save-XlsWorkbook -Workbook $wb -Path $path
+            }
+
+            # A1 を 5→0 に直接（ZIP 経由、COM を使わず）書き換える。A2（=100/A1）のキャッシュ済み
+            # <v> は 20（エラーなし）のまま残る（T-10 New-XlsxWithStaleFormulaCache と同じ機序）。
+            # この対比は -Force が CalculateFullRebuild に到達することを確認するためのもの
+            # （refused 呼び出しは ReadOnly セッションを保存しないため、「再計算だけして保存しない」場合と
+            # 「再計算そのものをしない」場合はディスク上のファイルからは区別できない。round 1 レビュー
+            # should-fix 指摘のとおり）。refused 側が実際に未再計算であることは、この対比テストではなく
+            # `skill/scripts/XlsAgent.psm1` のコード順序（早期 return が Set-XlsCalculationAutomatic
+            # より前にある）そのもので保証されている。
+            New-XlsxWithStaleFormulaCache -Path $path -OldPrecedentValue '5' -NewPrecedentValue '0'
+
+            $refused = Test-XlsFormulas -Path $path
+            $refused.status | Should Be 'refused'
+
+            $forced = Test-XlsFormulas -Path $path -Force
+
+            $forced.status | Should Be 'errors_found'
+            $forced.total_formulas | Should Be 2
+            $forced.total_errors | Should Be 2
+
+            $forced.error_summary.'#DIV/0!'.count | Should Be 1
+            (@($forced.error_summary.'#DIV/0!'.locations) -join ',') | Should Be 'Sheet1!A2'
+
+            $forced.error_summary.'#REF!'.count | Should Be 1
+            (@($forced.error_summary.'#REF!'.locations) -join ',') | Should Be 'Sheet1!B1'
+
+            # -Force でも success/errors_found の通常契約（G-04）は変わらない。links キーは追加されない。
+            (($forced.PSObject.Properties.Name | Sort-Object) -join ',') |
+                Should Be 'error_summary,status,total_errors,total_formulas'
         }
     }
 }

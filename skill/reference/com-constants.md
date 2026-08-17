@@ -15,7 +15,7 @@
 | xlOpenXMLTemplateMacroEnabled | 53 | SaveAs .xltm | 2026-08-17（T-04 Save-XlsWorkbook、実機。SaveAs 直後の Workbook.FileFormat で確認） |
 | xlOpenXMLTemplate | 54 | SaveAs .xltx | 2026-08-17（T-04 Save-XlsWorkbook、実機。SaveAs 直後の Workbook.FileFormat で確認。Workbooks.Open で開き直すとテンプレートから新規ブックが生成されるため、reopen では確認できない罠あり） |
 | xlCSV | 6 | SaveAs .csv | 2026-08-17（T-04 Save-XlsWorkbook、実機。SaveAs 直後の Workbook.FileFormat とファイル内容で確認） |
-| xlExcelLinks | 1 | LinkSources | 2026-08-17（T-08 Get-XlsModel、実機。`Workbook.LinkSources(1)` が未解決の外部リンク先パスを 1-based string[] で返す（リンクなしは $null）ことを確認） |
+| xlExcelLinks | 1 | LinkSources | 2026-08-17（T-08 Get-XlsModel、実機。`Workbook.LinkSources(1)` が未解決の外部リンク先パスを 1-based string[] で返す（リンクなしは $null）ことを確認。T-11 Test-XlsFormulas で refused 判定にも再利用: 実機プローブで、リンク数が 1 件でも常に `string[]`（スカラー化しない）で返ること、要素は `[シート名]` を含まないプレーンなファイルパス（例 `C:\NoSuch\Other.xlsx`）で `Test-Path -LiteralPath` でそのまま存在確認できること、解決済み・未解決を問わず両方が一覧に含まれることを確認） |
 | xlSrcRange | 1 | ListObjects.Add | |
 | xlYes | 1 | ListObjects.Add HasHeaders | |
 | xlCenter | -4108 | HorizontalAlignment | |

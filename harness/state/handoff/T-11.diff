@@ -1,0 +1,725 @@
+diff --git a/harness/state/board.md b/harness/state/board.md
+index 71fdb50..ae5855f 100644
+--- a/harness/state/board.md
++++ b/harness/state/board.md
+@@ -13,8 +13,8 @@
+ | T-07 | Get-XlsOverview | done | r1 | 2026-08-17 |
+ | T-08 | Get-XlsModel | done | r1 | 2026-08-17 |
+ | T-09 | Set-XlsRange | done | r1 | 2026-08-17 |
+-| T-10 | Test-XlsFormulas 関数 | review | r1 | 2026-08-17 |
+-| T-11 | 外部リンク refused / -Force | todo | - | |
++| T-10 | Test-XlsFormulas 関数 | done | r1 | 2026-08-17 |
++| T-11 | 外部リンク refused / -Force | review | r1 | 2026-08-17 |
+ | T-12 | Test-XlsFormulas.ps1 CLI | todo | - | |
+ | T-13 | com-constants.md 充填 | todo | - | |
+ | T-14 | patterns.md | todo | - | |
+diff --git a/harness/state/handoff/T-11.diff b/harness/state/handoff/T-11.diff
+new file mode 100644
+index 0000000..e69de29
+diff --git a/harness/state/reviews/T-11.md b/harness/state/reviews/T-11.md
+new file mode 100644
+index 0000000..bddf8fb
+--- /dev/null
++++ b/harness/state/reviews/T-11.md
+@@ -0,0 +1,84 @@
++# Review T-11 (round 1)
++
++## 判定: done
++
++## テスト実行
++
++- コマンド: 未実行。予定していたコマンドは `powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-Pester -Path tests\Test-XlsFormulas.Tests.ps1"`。
++- 結果: サンドボックスが read-only で、実行用 Windows sandbox helper も起動できなかったため、コード読解で代替。実装者記録は対象テスト passed 13 / failed 0、全体回帰 passed 194 / failed 0。
++- EXCEL.EXE 差分: 未確認（テストおよび Excel は起動していない）。実装者記録では差分なし。
++
++## チェックリスト
++
++| # | 項目 | ○/×/- | メモ |
++|---|---|---:|---|
++| C-1 | 関数シグネチャが設計と一致 | ○ | 既存の `Path`、`TimeoutSec=30`、`Force`、`AsJson` を維持。 |
++| C-2 | 戻り値の形が設計と一致 | ○ | refused は `status/reason/links` の3キーで、reason も設計どおり。 |
++| C-3 | recalc.py JSON 契約と一致 | ○ | 通常経路の4キーおよびネストを変更していない。`-Force` も同じ通常経路へ合流する。 |
++| C-4 | exit code 契約 | - | CLI・exit code は T-12 の範囲。 |
++| C-5 | §0 の確定事項に変更なし | ○ | COM方式・PowerShell 5.1・依存関係を変更していない。 |
++| C-6 | タスク範囲外を触っていない | ○ | モジュール、テスト、定数記録、タスク管理更新に限定。 |
++| S-1 | `GetActiveObject` なし | ○ | 追加なし。 |
++| S-2 | COM が `Invoke-XlsSession` 外に漏れていない | ○ | `LinkSources` はセッションの ScriptBlock から内部ヘルパーを呼ぶ形。テストのCOM操作も ScriptBlock 内。 |
++| S-3 | finally の終了処理 | ○ | 既存の Close→Quit→Release→GC×2 を変更していない。 |
++| S-4 | ScriptBlock throw 時に残留なし | ○ | 既存テストを維持。実装者記録では EXCEL.EXE 差分なし。 |
++| S-5 | `Value2` を使用 | ○ | 追加実装に不適切な `Value`/`Text` 使用なし。 |
++| S-6 | 2次元代入が `[object[,]]` | ○ | fixture の値代入は既存の `New-XlsSingleCellArray` 経由。 |
++| S-7 | `SpecialCells` ヒットなし例外を処理 | ○ | 既存のエラー走査を変更していない。 |
++| S-8 | 危険な保存付き Close なし | ○ | refused/Force とも保存せず、既存終了処理へ戻る。 |
++| S-9 | Excel 全殺しなし | ○ | 追加なし。 |
++| S-10 | ReadOnly・STA 検査 | - | T-03 固有。既存処理への変更なし。 |
++| P-1 | `#Requires -Version 5.1` | ○ | モジュール・テストとも宣言あり。 |
++| P-2 | PowerShell 7 専用構文なし | ○ | 追加コードは5.1互換。 |
++| P-3 | ファイルI/OのUTF-8指定 | - | 新規のテキスト入出力なし。 |
++| P-4 | Pester 3.4互換構文 | ○ | `Should Be` 形式で、`-Because` 等なし。 |
++| T-1 | Pester が緑 | - | サンドボックス制約により独立実行できず。実装者記録は対象13/0、全体194/0。 |
++| T-2 | `AfterEach` に孤児検査 | ○ | `Assert-NoOrphanExcel` が既存 `AfterEach` にある。 |
++| T-3 | 実Excelを使用 | ○ | fixture作成・検証とも実COMセッションを使用する構成。 |
++| T-4 | 実装計画 §4 の受け入れ要点 | ○ | missing link の refused と `-Force` の `errors_found` をカバー。未再計算の証明については下記指摘あり。 |
++| T-5 | 異常系がある | ○ | missing external source と既存のファイル不在テストあり。 |
++| Q-1 | コメントベースヘルプ | ○ | 内部ヘルパーと公開関数の説明を更新。 |
++| Q-2 | 次の一手を示すエラー | - | 新しい例外を追加していない。 |
++| Q-3 | COM定数を集約・記録 | ○ | 既存 `$script:Xl.xlExcelLinks` を再利用し、実機知見を定数表へ追記。 |
++| Q-4 | COMの罠を実装メモに記録 | ○ | 単一リンクでも配列、プレーンパス、解決済みリンクも含む点を記録。 |
++| Q-5 | 自己チェックの○が事実と一致 | - | コード上は整合。G-15とEXCEL残留だけは独立実行できず、実装者記録のみ。 |
++
++## 指摘
++
++blocking なし。
++
++### [should-fix] stale cache と `-Force` の対比だけでは refused 側の未再計算を証明できない
++
++- 場所: `tests/Test-XlsFormulas.Tests.ps1:528`、`harness/state/tasks/T-11.md:94`
++- 内容: refused 呼び出しは ReadOnly セッションを閉じるため、仮に誤って `CalculateFullRebuild` を実行してから refused を返しても、再計算結果は保存されません。その後の `-Force` はディスク上の同じ stale fixture を新しいセッションで開くので、現在のテスト結果はその誤実装でも同じになります。キー集合の検査も戻り値の形だけを保証し、再計算や走査が実行されなかったことは保証しません。現行コード自体は `skill/scripts/XlsAgent.psm1:3162` の早期 return が `Set-XlsCalculationAutomatic`（同:3176）より前なので正しいです。
++- 修正案: テスト名とコメントの証明範囲を正確にし、未再計算はコード順序のレビューで確認したことを明記する。実行可能な回帰保証が必要なら、fixture作成後の refused 呼び出しについて `Set-XlsCalculationAutomatic` の行が未到達であることをコードカバレッジ等で直接計測する。
++
++```diff
++-It '-Force skips the refused check and performs a real recalculation, ... (proves refused truly skips CalculateFullRebuild)' {
+++It '-Force skips the refused check and performs a real recalculation, revealing a stale-cache error' {
++@@
++-# 「-Force で初めて古いキャッシュの誤りが露見する」ことが refused の未再計算を実証する。
+++# この対比は -Force が CalculateFullRebuild に到達することを確認する。
+++# refused 側の未再計算は、早期 return が Set-XlsCalculationAutomatic より前にあるコード順序で確認する。
++```
++
++### [nit] 「全リンクを返す」判断を mixed-link fixture で固定していない
++
++- 場所: `skill/scripts/XlsAgent.psm1:3053`、`tests/Test-XlsFormulas.Tests.ps1:456`
++- 内容: `links` に存在するものも含めた全リンクを返す判断は妥当です。設計は missing-only を要求しておらず、`Get-XlsModel.workbook.links` との意味の統一と診断情報の完全性にも利点があります。ただし現テストは「missing 1件」と「existing 1件」を別々に検証しており、existing と missing が混在した refused で両方が返ることを固定していません。
++- 修正案: 混在fixtureを1件追加し、refused と全2パスの集合を検査する。
++
++```powershell
++$result.status | Should Be 'refused'
++$result.links.Count | Should Be 2
++(($result.links | Sort-Object) -join '|') |
++    Should Be ((@($existingPath, $missingPath) | Sort-Object) -join '|')
++```
++
++## 良かった点（1〜2 行、次のタスクでも続けてほしいこと）
++
++refused の3キー契約と早期 return の位置は設計 §3.6 に一致しています。`-Force` も新しい分岐を増やさず refused 判定だけを迂回して既存の再計算・走査へ合流しており、通常フローへの影響が小さい実装です。
++
++## SKILL.md gotchas 候補（実装メモに書かれていないが気づいた罠があれば）
++
++なし。単一リンクでも配列になること、パスがプレーン文字列であること、解決済みリンクも `LinkSources` に含まれることは実装メモに記録済みです。
+\ No newline at end of file
+diff --git a/harness/state/tasks/T-11.md b/harness/state/tasks/T-11.md
+index b15b7a9..bb0b3f2 100644
+--- a/harness/state/tasks/T-11.md
++++ b/harness/state/tasks/T-11.md
+@@ -38,14 +38,190 @@
+ 
+ ## 実装メモ(Sonnet が記入)
+ 
++### 実装した内容
++- `skill/scripts/XlsAgent.psm1`
++  - `Get-XlsExternalLinkStatus -Workbook <obj>`(内部、Export しない)を新設。
++    `Workbook.LinkSources(xlExcelLinks)` を読み、リンクパス一覧(`Links`)と、そのうち 1 つでも
++    `Test-Path -LiteralPath` で存在しないものがあるか(`HasMissing`)を返す。T-08 の
++    `Get-XlsModel` の `workbook.links` 構築コードと同じ COM 呼び出し・同じ値を再利用する形にした。
++  - `Test-XlsFormulas` のスクリプトブロック冒頭(`Set-XlsCalculationAutomatic` の**前**)に、
++    `-Force` でなければ `Get-XlsExternalLinkStatus` を呼び、`HasMissing` が真なら
++    `{ status: "refused", reason: "external links present", links: [...] }` を返して即座に抜ける
++    (`Set-XlsCalculationAutomatic`/`CalculateFullRebuild`/エラー走査のいずれも実行しない)。
++    `-Force` のときはこの判定自体を呼ばず、常に通常フロー(既存の success/errors_found)に進む。
++
++### 仕様の具体化(実装判断)
++- **判定タイミング**: タスクカード指定どおり `CalculateFullRebuild`(`Set-XlsCalculationAutomatic`
++  の内部で呼ばれる)より前。`Get-XlsExternalLinkStatus` は `LinkSources` の読み取りと
++  `Test-Path`(ファイルシステムのみ、COM ではない)だけで完結し、再計算を一切要求しない。
++- **refused 条件**: `LinkSources(xlExcelLinks)` が非 null かつ、そのうち 1 つでも
++  `Test-Path -LiteralPath` で存在しないパスがある場合。全リンク先が存在する場合はリンクが
++  あっても refused にせず通常フローで続行する(実機テストで確認、下記「踏んだ COM の罠」参照)。
++- **`links` フィールドの内容**: LinkSources が返す全リンクパスを含める(存在するものも含む。
++  欠損分だけに絞らない)。理由:
++  1. T-08 `Get-XlsModel` の `workbook.links` が既に「LinkSources の生の全件」という契約で
++     実装・テスト済みであり、同じ COM 呼び出し・同じ値を refused でも再利用することで
++     挙動を一貫させた(実装を分岐させない)。
++  2. 「欠損分だけ」にすると「存在するリンクは省略する」という新しい絞り込みルールを別途
++     定義・文書化する必要が生じ、エージェントが `Get-XlsModel.workbook.links` と
++     `Test-XlsFormulas` の refused `links` を異なる意味だと誤解する余地が増える。
++  3. refused を見たエージェントが SKILL.md の指示(「リンク値の退避(`Get-XlsRange`)か
++     `-Force` を選ぶ」)に従って対応する際、どのリンクが対象かの全体像が 1 個のフィールドで
++     揃う方が扱いやすい。
++- **`-Force`**: T-01 以来のスタブパラメータを配線した。refused 判定(`Get-XlsExternalLinkStatus`
++  の呼び出し自体)をスキップし、常に通常フロー(success/errors_found、リンク切れセルは
++  `CalculateFullRebuild` 後に `#REF!` として通常のエラー検出に自然に乗る)を実行する。
++- **refused は正常系**: `-AsJson` でも `{status, reason, links}` の 3 キーのみを JSON 化する。
++  success/errors_found の形(`status/total_formulas/total_errors/error_summary`)とは別物であり、
++  refused の結果オブジェクトには total_formulas 等のキーを一切含めない(テストでキー集合を
++  `'links,reason,status'` に固定。success/errors_found 側のキー集合
++  `'error_summary,status,total_errors,total_formulas'` も `-Force` 込みで変わらないことを固定した)。
++- **`-TimeoutSec`**: 引き続き未配線(T-12 の CLI 層の範囲。本タスクでは触っていない)。
++
++### 実機確認したこと(プローブ実行、Invoke-XlsSession 経由)
++- `LinkSources(xlExcelLinks)` はリンク数が 1 件でも常に `System.Object[]`(1-based)で返る
++  (`Value2`/`NumberFormat` に見られる「1 件ならスカラー化」パターンにはならない。T-08 の
++  「1-based string[]」という記録を、要素数 1 のケースでも追加確認した)。
++- 要素は `[シート名]` やセル参照部分を含まないプレーンなファイルパス
++  (`='C:\NoSuch\[Other.xlsx]Sheet1'!A1` という数式に対して `C:\NoSuch\Other.xlsx` が返る)。
++  `Test-Path -LiteralPath` でそのまま存在確認できる。
++- リンク先が実在するファイルの場合も同じ形(プレーンなパスの `string[]`)で `LinkSources` に
++  含まれる(解決済み・未解決を問わない)。この場合 `Test-Path` は真になり、対応するセルの
++  `Value2` はリンク先の実際の値(検証用に作ったファイルでは `42`)を正しく返した
++  ("does not refuse when every external link source resolves to an existing file" テストで確認)。
++
++### 「refused のとき再計算していない」ことの検証方法(実装判断、round 1 レビュー should-fix 対応で記述を修正)
++ブラックボックス視点では、`Test-XlsFormulas` は常に `-ReadOnly` セッションで保存しないため、
++「再計算だけして保存しない」場合と「再計算そのものをしない」場合はディスク上のファイルからは
++区別できない。したがって実行可能なテストだけで refused 側の未再計算を直接証明することはできない。
++裏付けは 2 種類の性質が異なる根拠を組み合わせたもの:
++1. **テストで固定した回帰**: refused の戻り値の形を `{status, reason, links}` の 3 キーだけに
++   固定した(テストで `PSObject.Properties.Name` のキー集合を明示比較)。`total_formulas`/
++   `error_summary` 等の「`CalculateFullRebuild` を経て初めて埋まる情報」を一切含まないことを
++   回帰として固定した。
++2. **コードレビュー(実行では確認できない、コード順序による保証)**: `skill/scripts/XlsAgent.psm1`
++   の `Test-XlsFormulas` では、`Get-XlsExternalLinkStatus` による refused 判定と早期 `return` が
++   `Set-XlsCalculationAutomatic`(= `CalculateFullRebuild` を含む)の呼び出しより**前**の行に
++   書かれている。したがって refused を返す実行パスはエラー走査コードにそもそも到達せず、
++   `CalculateFullRebuild` は呼ばれない。これはコード上の事実であり、テストで動的に検証している
++   ものではない(round 1 レビュー should-fix 指摘: 「stale cache + `-Force` の対比だけでは
++   refused 側の未再計算を証明できない」への対応。誤って実装が先に `CalculateFullRebuild` を
++   呼んでから refused を返しても、`-ReadOnly` セッションは保存しないため、その後 `-Force` で
++   同じ stale fixture を新しいセッションで開いた結果は変わらず、対比テストだけでは誤実装を
++   検出できないという指摘は妥当だった)。
++3. **`-Force` との対比テスト**(`tests/Test-XlsFormulas.Tests.ps1` の
++   "`-Force` skips the refused check and performs a real recalculation, revealing a stale-cache
++   error"): これが証明するのは「`-Force` を指定すると実際に `CalculateFullRebuild` に到達し、
++   T-10 の `New-XlsxWithStaleFormulaCache` で仕込んだ stale cache(A1: 5→0 に ZIP 直接書き換え、
++   A2=`100/A1` のキャッシュ済み `<v>` は 20 のまま)が正しく再計算されて `#DIV/0!` として検出
++   される」ことであり、「refused 側が未再計算である」ことの証明ではない(このテストの目的を
++   誤解しないよう、テスト名・コメントから「refused の未再計算を実証する」という表現を削除し、
++   「`-Force` が `CalculateFullRebuild` に到達することを確認する」という証明範囲に修正した)。
++
++### 踏んだ COM の罠 / 気づいたこと(実機確認)
++1. **LinkSources は 1 件でもスカラー化しない**: T-08 の記録は複数リンクのケースのみだったが、
++   本タスクで単一リンクのケースもプローブで確認し、`Area.Value2`/`NumberFormat` のような
++   「1 件ならスカラー」パターンとは異なることを確定させた(`com-constants.md` に追記)。
++2. **LinkSources のパスは常にプレーン**: 数式内の `[Other.xlsx]Sheet1` という角括弧付きシート
++   参照ではなく、`C:\...\Other.xlsx` という素のファイルパスが返る。`Test-Path -LiteralPath` を
++   そのまま使える(追加のパース処理は不要)。
++3. **既存の `Set-XlsFormulaVerified`/`Set-XlsValue2Verified`/`New-XlsxWithStaleFormulaCache`
++   (T-10 のテストヘルパー)は無改造で外部リンク fixture にもそのまま使えた**。外部リンク数式
++   ("='C:\...\[Other.xlsx]Sheet1'!A1")を `Set-XlsFormulaVerified` で書き込んでも、単一セルの
++   読み戻し比較で問題なく一致した(プローブ・テストの両方で確認。数式文字列がそのまま
++   ラウンドトリップし、Excel 側で正規化・書き換えされることはなかった)。
++
++### テストの置き場所(実装判断)
++新規テストは `tests/Test-XlsFormulas.Tests.ps1` 内に新しい Context
++`'external link refused / -Force (T-11)'` として追加した(別ファイルに分割しなかった)。理由:
++T-10 が確立した `Set-XlsFormulaVerified`/`Set-XlsValue2Verified`/`New-XlsxWithStaleFormulaCache`
++をそのまま再利用でき、別ファイルにすると同じヘルパーの複製が必要になるため。タスクカードが
++「既存テストファイルへの追加」を選択肢として明示的に許可している。
++
++### テスト実行結果(自分で実行、実機)
++```
++powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-Pester -Path tests\Test-XlsFormulas.Tests.ps1"
++Passed: 13 Failed: 0 Skipped: 0 Pending: 0 Inconclusive: 0
++(T-10 時点の 9 件 + 本タスクの新規 4 件 = 13 件、全て緑)
++```
++実行後 `Get-Process EXCEL` の PID 差分ゼロを確認済み(残骸なし)。
++
++### 全体回帰(3 分割、フォアグラウンド、それぞれ単独実行)
++```
++分割 A: tests\T01.Tests.ps1, T02.Tests.ps1, Invoke-XlsSession.Tests.ps1,
++        Save-XlsWorkbook.Tests.ps1, Clear-XlsOrphans.Tests.ps1
++        Passed: 43 Failed: 0 Skipped: 0 Pending: 0 Inconclusive: 0 (313s)
++
++分割 B: tests\Get-XlsRange.Tests.ps1, Get-XlsOverview.Tests.ps1
++        Passed: 58 Failed: 0 Skipped: 0 Pending: 0 Inconclusive: 0 (169s)
++
++分割 C: tests\Get-XlsModel.Tests.ps1, Set-XlsRange.Tests.ps1, Test-XlsFormulas.Tests.ps1
++        Passed: 93 Failed: 0 Skipped: 0 Pending: 0 Inconclusive: 0 (579s)
++
++合計: 43 + 58 + 93 = 194(T-10 完了時点の全体回帰 190 + 本タスクの新規 4 件 = 194、一致)。
++```
++各分割の実行後、`Get-Process EXCEL` が 0 件であることを確認済み(残骸なし)。3 分割とも単独の
++`powershell.exe` プロセスでフォアグラウンド実行し、並行実行はしていない(T-10 で記録された
++「複数 Pester ランの並行実行による Orphan 誤検出」を避けるため)。
++
++### 完了条件との対応
++- 存在しない外部リンクを持つブックで refused / reason・links キー: テスト
++  "returns a refused result with reason/links..." および "-AsJson returns the refused shape..."
++  で確認。
++- refused のとき再計算が走っていないこと: 上記「『refused のとき再計算していない』ことの
++  検証方法」参照(コードレビュー根拠 + `-Force` 対比テストの組み合わせ。round 1 レビュー対応で
++  証明範囲の記述を修正済み)。
++- `-Force` で errors_found/success(#REF! を含む通常の検証結果): テスト
++  "-Force skips the refused check and performs a real recalculation, revealing a stale-cache
++  error" で確認(`#REF!`→`Sheet1!B1`)。
++- リンクなしブックでは従来どおり: T-10 の既存 9 テスト(本タスクで変更なし)が回帰として
++  全て緑のまま機能していることで確認。
++
++## round 1 レビュー対応(G-16、harness/state/reviews/T-11.md)
++
++判定: done(blocking ゼロ)。should-fix 1 件・nit 1 件、いずれも対応した。
++
++1. **[should-fix] stale cache と `-Force` の対比だけでは refused 側の未再計算を証明できない**
++   → 対応した。指摘のとおり、`-ReadOnly` セッションは保存しないため「再計算だけして保存しない
++   誤実装」と「再計算そのものをしない正しい実装」はディスク上のファイルからは区別できず、
++   対比テストだけでは誤実装を検出できない。レビューの diff スニペットどおり:
++   - `tests/Test-XlsFormulas.Tests.ps1` のテスト名を
++     `'-Force skips the refused check and performs a real recalculation, revealing a stale-cache
++     error the refused call never computed (proves refused truly skips CalculateFullRebuild)'` から
++     `'-Force skips the refused check and performs a real recalculation, revealing a stale-cache
++     error'` に変更(「refused の未再計算を実証する」という言い過ぎた主張を削除)。
++   - 同テスト内のコメントを「この対比は refused の未再計算を実証する」という表現から、
++     「この対比は `-Force` が `CalculateFullRebuild` に到達することを確認するためのもの」
++     「refused 側の未再計算は、早期 return が `Set-XlsCalculationAutomatic` より前にあるコード順序
++     そのもので保証されている」という証明範囲の正確な記述に修正。
++   - 本タスクカードの該当記述(旧 94 行目付近、「『refused のとき再計算していない』ことの
++     検証方法」節)も同様に、テストによる動的証明とコードレビューによる静的な保証を明確に
++     区別する記述に書き換えた(上記の節を参照)。
++2. **[nit] existing と missing が混在する 2 リンクの fixture を固定していない** → 対応した。
++   `tests/Test-XlsFormulas.Tests.ps1` に新規 It
++   `'includes both existing and missing external link sources in links when a workbook mixes the
++   two (refuses because at least one is missing)'` を追加。既存リンク先(実ファイル、A1)と
++   欠損リンク先(不在パス、B1)を同一ブックに持たせ、`Test-XlsFormulas` が refused を返し、
++   `links` に両パスが(欠損分だけに絞らず)含まれることをレビューのスニペットどおり
++   `Sort-Object` した集合比較で固定した。
++
++再テスト結果(自分で実行、実機、対象ファイルのみ):
++```
++powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-Pester -Path tests\Test-XlsFormulas.Tests.ps1"
++Passed: 14 Failed: 0 Skipped: 0 Pending: 0 Inconclusive: 0
++(round 1 時点の 13 件 + 本対応で追加した mixed-link テスト 1 件 = 14 件、全て緑)
++```
++実行後 `Get-Process EXCEL` の PID 差分ゼロを確認済み(残骸なし)。このファイルのみの変更のため
++全体回帰は再実行していない(コーディネーター指示どおり)。
++
+ ## 自己チェック
+ | # | 項目 | ○/× |
+ |---|---|---|
+-| G-04 | recalc.py JSON 契約(キー名)を変えていない | |
+-| G-05 | GetActiveObject を使っていない | |
+-| G-06 | COM は Invoke-XlsSession 内のみ | |
+-| G-07 | Assert-NoOrphanExcel が AfterEach にある | |
+-| G-08 | Value2 代入は [object[,]] のみ | |
+-| G-11 | 7 専用構文なし | |
+-| G-13 | Pester テストがある | |
+-| G-15 | テストは緑 | |
++| G-04 | recalc.py JSON 契約(キー名)を変えていない | ○ |
++| G-05 | GetActiveObject を使っていない | ○ |
++| G-06 | COM は Invoke-XlsSession 内のみ | ○ |
++| G-07 | Assert-NoOrphanExcel が AfterEach にある | ○ |
++| G-08 | Value2 代入は [object[,]] のみ | ○ |
++| G-11 | 7 専用構文なし | ○ |
++| G-13 | Pester テストがある | ○ |
++| G-15 | テストは緑 | ○ |
+diff --git a/harness/state/tasks/T-12.md b/harness/state/tasks/T-12.md
+new file mode 100644
+index 0000000..725e7a2
+--- /dev/null
++++ b/harness/state/tasks/T-12.md
+@@ -0,0 +1,58 @@
++# T-12 Test-XlsFormulas.ps1 CLI
++
++## 目的
++recalc.py 相当の CLI `skill/scripts/Test-XlsFormulas.ps1` を実装する(P4 完結)。
++
++> 01-design.md §3.6:
++> ```
++> pwsh -File Test-XlsFormulas.ps1 <path> [timeoutSec=30] [-Force]
++> ```
++> - 出力: recalc.py 完全互換 JSON(標準出力へ)。
++> - 終了コード: `error` キー(Excel 起動失敗・ファイル不在・タイムアウト)のときのみ非 0。`errors_found` / `refused` は 0(G-04)。
++> - タイムアウト: `CalculateFullRebuild` を Runspace で走らせて timeoutSec で打ち切り、`{ "error": "timeout" }`。
++
++## 入力
++- 参照ファイル: docs/01-design.md §3.6、docs/03-guardrails.md G-04
++- 前提タスク: T-11(完了済み)
++- 前提レビュー: T-10/T-11 系
++
++## 仕様の具体化(実装判断は実装メモに記録)
++- 環境注記: この開発機には pwsh(PowerShell 7)が無い。CLI は Windows PowerShell 5.1 の `powershell -File` でも pwsh でも動くこと(G-11 準拠なら自然に満たされる)。テストは powershell.exe で行う。
++- 引数: 位置引数 `<path>`、位置引数 `[timeoutSec]`(既定 30)、スイッチ `-Force`。
++- スクリプトは XlsAgent.psm1 を相対パスで Import し、Test-XlsFormulas を呼んで JSON を stdout へ 1 個だけ出力する。
++- タイムアウト実装: 検証全体(Invoke-XlsSession 含む)を別 Runspace(STA necessity に注意 — Invoke-XlsSession は STA 必須。Runspace の ApartmentState を STA に設定)で実行し、timeoutSec 超過で打ち切り `{ "error": "timeout" }` を出力して非 0 終了。打ち切り時の Excel プロセスは PID マーカー+リースが残るので Clear-XlsOrphans で回収する(実装判断: CLI が自動で回収を試みるか、メッセージで案内するか — 安全性を優先し判断を記録)。
++- error 系 JSON: `{ "error": "<説明>" }`(recalc.py 互換。ファイル不在・Excel 起動失敗・タイムアウト等)。exit 1。
++- success / errors_found / refused: exit 0。
++- stdout には JSON のみ(それ以外のログは stderr か抑制。エージェントがパースする前提)。
++
++## 成果物
++- `skill/scripts/Test-XlsFormulas.ps1`(新規)
++- `tests/TestXlsFormulasCli.Tests.ps1`(CLI をサブプロセスとして起動する統合テスト)
++
++## 受け入れテスト要点(02-implementation-plan.md §4)
++- errors_found のブックで exit 0 + JSON パース可能 + status="errors_found"。
++- success のブックで exit 0。
++- refused のブック(T-11 の fixture 手法)で exit 0 + status="refused"。`-Force` で通常フロー。
++- ファイル不在で exit 非 0 + `{"error": ...}`。
++- タイムアウト: 極端に小さい timeoutSec(例 1 秒未満は不可なら 1)+ 意図的に重いブック、または確実に 1 秒を超える状況で `{"error": "timeout"}` + exit 非 0。重いブックの作成が不安定なら、タイムアウト機構の単体検証(Runspace 打ち切り)で代替してよい(判断を記録)。タイムアウト後に EXCEL.EXE が残らない(または回収手段が機能する)ことを確認。
++- stdout が JSON 1 個のみであること(前後に余計な出力がない)。
++
++## 完了条件(Definition of Done)
++- [ ] 対象テストが緑(+分割回帰 A/B/C 緑)
++- [ ] テスト後に EXCEL.EXE が残っていない
++- [ ] guardrails 自己チェック欄に○
++- [ ] Codex レビューで blocking ゼロ
++
++## 実装メモ(Sonnet が記入)
++
++## 自己チェック
++| # | 項目 | ○/× |
++|---|---|---|
++| G-04 | exit code 契約(error のみ非 0)/JSON キー名 | |
++| G-05 | GetActiveObject を使っていない | |
++| G-06 | COM は Invoke-XlsSession 内のみ | |
++| G-07 | Assert-NoOrphanExcel が AfterEach にある | |
++| G-10 | 全殺しなし(タイムアウト回収もマーカー経由) | |
++| G-11 | 7 専用構文なし(5.1 で動く) | |
++| G-13 | Pester テストがある | |
++| G-15 | テストは緑 | |
+diff --git a/skill/reference/com-constants.md b/skill/reference/com-constants.md
+index 21894a0..e5d1a76 100644
+--- a/skill/reference/com-constants.md
++++ b/skill/reference/com-constants.md
+@@ -15,7 +15,7 @@
+ | xlOpenXMLTemplateMacroEnabled | 53 | SaveAs .xltm | 2026-08-17（T-04 Save-XlsWorkbook、実機。SaveAs 直後の Workbook.FileFormat で確認） |
+ | xlOpenXMLTemplate | 54 | SaveAs .xltx | 2026-08-17（T-04 Save-XlsWorkbook、実機。SaveAs 直後の Workbook.FileFormat で確認。Workbooks.Open で開き直すとテンプレートから新規ブックが生成されるため、reopen では確認できない罠あり） |
+ | xlCSV | 6 | SaveAs .csv | 2026-08-17（T-04 Save-XlsWorkbook、実機。SaveAs 直後の Workbook.FileFormat とファイル内容で確認） |
+-| xlExcelLinks | 1 | LinkSources | 2026-08-17（T-08 Get-XlsModel、実機。`Workbook.LinkSources(1)` が未解決の外部リンク先パスを 1-based string[] で返す（リンクなしは $null）ことを確認） |
++| xlExcelLinks | 1 | LinkSources | 2026-08-17（T-08 Get-XlsModel、実機。`Workbook.LinkSources(1)` が未解決の外部リンク先パスを 1-based string[] で返す（リンクなしは $null）ことを確認。T-11 Test-XlsFormulas で refused 判定にも再利用: 実機プローブで、リンク数が 1 件でも常に `string[]`（スカラー化しない）で返ること、要素は `[シート名]` を含まないプレーンなファイルパス（例 `C:\NoSuch\Other.xlsx`）で `Test-Path -LiteralPath` でそのまま存在確認できること、解決済み・未解決を問わず両方が一覧に含まれることを確認） |
+ | xlSrcRange | 1 | ListObjects.Add | |
+ | xlYes | 1 | ListObjects.Add HasHeaders | |
+ | xlCenter | -4108 | HorizontalAlignment | |
+diff --git a/skill/scripts/XlsAgent.psm1 b/skill/scripts/XlsAgent.psm1
+index 0215833..3c14f56 100644
+--- a/skill/scripts/XlsAgent.psm1
++++ b/skill/scripts/XlsAgent.psm1
+@@ -3017,6 +3017,56 @@ function Get-XlsFormulaErrorCells {
+     return , $results.ToArray()
+ }
+ 
++function Get-XlsExternalLinkStatus {
++    <#
++    .SYNOPSIS
++        ワークブックの Excel 形式外部リンク（`Workbook.LinkSources(xlExcelLinks)`）のリンク元パス
++        一覧と、そのうち 1 つでもファイルシステム上に存在しないものがあるかを返す。
++        Test-XlsFormulas の内部関数（T-11、外部リンク refused 判定）。COM は
++        `Workbook.LinkSources` の読み取りのみ（Invoke-XlsSession の ScriptBlock 内から呼ばれる前提。
++        G-06）。Export しない。
++    .PARAMETER Workbook
++        対象の Workbook COM オブジェクト。
++    .EXAMPLE
++        Get-XlsExternalLinkStatus -Workbook $wb
++    .NOTES
++        実機確認（プローブ実行、実装メモ参照）:
++          - `LinkSources(xlExcelLinks)` はリンクが 1 つもなければ `$null`。1 つ以上あれば
++            （リンク数が 1 でも）常に 1-based の `string[]`（Areas/Value2 のような「1 件ならスカラー」
++            パターンにはならない）を返す。要素はリンク先ブックファイルへのプレーンなパス
++            （例 `'C:\NoSuch\Other.xlsx'`）で、`[シート名]` やセル参照部分は含まれない。
++            `Test-Path -LiteralPath` でそのままファイル存在確認ができる。
++          - 解決済み（リンク先が存在する）リンクも未解決リンクと同じ形でこの一覧に含まれる
++            （T-08 Get-XlsModel の `workbook.links` と同じ挙動・同じ COM 呼び出し）。
++        実装判断: `Links` には LinkSources が返す全パスを含める（存在するものも含む）。
++        欠損分だけに絞らなかった理由は Test-XlsFormulas の .NOTES 参照。
++    #>
++    [CmdletBinding()]
++    param(
++        [Parameter(Mandatory = $true)]
++        $Workbook
++    )
++
++    $linksOut = New-Object System.Collections.ArrayList
++    $hasMissing = $false
++
++    $rawLinkSources = $Workbook.LinkSources($script:Xl.xlExcelLinks)
++    if ($null -ne $rawLinkSources) {
++        foreach ($link in $rawLinkSources) {
++            $linkPath = [string]$link
++            [void]$linksOut.Add($linkPath)
++            if (-not (Test-Path -LiteralPath $linkPath)) {
++                $hasMissing = $true
++            }
++        }
++    }
++
++    return [PSCustomObject][ordered]@{
++        Links      = @($linksOut.ToArray())
++        HasMissing = $hasMissing
++    }
++}
++
+ function Test-XlsFormulas {
+     <#
+     .SYNOPSIS
+@@ -3027,14 +3077,16 @@ function Test-XlsFormulas {
+         再計算のタイムアウト秒数（既定 30）。T-10 時点では未使用（T-12 の CLI ラッパーで配線予定。
+         実装メモ参照）。
+     .PARAMETER Force
+-        外部リンク先が見つからない場合でも再計算を続行する。T-10 時点では未使用（外部リンク検出は
+-        T-11 の範囲）。
++        外部リンク先が見つからない場合の refused 判定をスキップし、通常の検証フロー
++        （CalculateFullRebuild → エラー走査）をそのまま実行する（T-11）。
+     .PARAMETER AsJson
+         指定した場合、オブジェクトではなく JSON 文字列（recalc.py 完全互換のキー名）で返す。
+     .EXAMPLE
+         Test-XlsFormulas -Path 'C:\tmp\book.xlsx'
+     .EXAMPLE
+         Test-XlsFormulas -Path 'C:\tmp\book.xlsx' -AsJson
++    .EXAMPLE
++        Test-XlsFormulas -Path 'C:\tmp\book.xlsx' -Force
+     .NOTES
+         戻り値の形（G-04、recalc.py と完全一致させる。一字も変えない）:
+           { status: "success" | "errors_found",
+@@ -3042,15 +3094,38 @@ function Test-XlsFormulas {
+             total_errors: int,
+             error_summary: { "#REF!": { count: int, locations: ["Sheet1!B5", ...], locations_truncated: int }, ... } }
+ 
++        外部リンク refused の戻り値の形（T-11、01-design.md §3.6）:
++          { status: "refused", reason: "external links present", links: ["C:\...\Other.xlsx", ...] }
++        上記の success/errors_found の形とは別物（total_formulas 等のキーは含まない）。$Force を
++        指定すると refused 判定自体を行わず、常に success/errors_found の形で返す。
++
+         実装判断（詳細は実装メモ）:
+           - `Invoke-XlsSession -ReadOnly` で開く（検証専用、ファイルは変更しない）。開いた直後は
+             Invoke-XlsSession が Calculation=Manual を強制するため、`Set-XlsCalculationAutomatic`
+             （T-04/Save-XlsWorkbook と共有する内部ヘルパー）で Automatic に戻し
+             `CalculateFullRebuild` を実行してから走査する。Manual のまま古い値が残ったブックでも
+             正しい結果になる（T-04 罠 5 と同じ機序。実装メモにこの機序を利用したテストの説明あり）。
++          - 外部リンク refused 判定（T-11）は `Set-XlsCalculationAutomatic`（= CalculateFullRebuild を
++            含む）より**前**に行う。タスクカード指定どおり: 再計算するとリンクセルが #REF! になり、
++            保存はしない（ReadOnly）ものの検証結果が汚れるため、判定用の `Get-XlsExternalLinkStatus`
++            （本タスクの内部関数）は `Workbook.LinkSources` を読むだけで再計算を一切要求しない。
++            `$Force` が指定されている間はこの判定自体をスキップする（Get-XlsExternalLinkStatus すら
++            呼ばない。リンク切れの有無に関わらず常に通常フローへ進む）。
++          - refused 条件: `LinkSources(xlExcelLinks)` が非 null かつ、そのうち 1 つでも
++            `Test-Path -LiteralPath` で存在しないパスがある場合。全リンク先が存在するなら
++            （リンクはあっても）refused にはせず通常フローで続行する。
++          - refused の `links` フィールドの内容（実装判断）: LinkSources が返す全リンクパスを含める
++            （存在するものも含む。欠損分だけに絞らない）。理由: (1) T-08 Get-XlsModel の
++            `workbook.links` が既に「LinkSources の生の全件」という契約で実装・テスト済みであり、
++            同じ COM 呼び出し・同じ値を refused でも再利用することで挙動を一貫させた。(2)「欠損分だけ」
++            にすると "存在するリンクは省略する" という新しい絞り込みルールを別途定義・文書化する
++            必要が生じ、エージェント側が Get-XlsModel の links と refused の links を同じ意味だと
++            誤解する余地を減らせる。(3) refused を見たエージェントが SKILL.md の指示どおり
++            `Get-XlsRange` でリンク値を退避する際、どのセル/リンクが対象かの全体像が links 1 個で
++            揃う方が扱いやすい。
+           - total_formulas はシートごとに `Get-XlsFormulaCellKeySet`（T-08 と共有）の `.Count` を
+             UsedRange に対して求めて合算する（数式セルなしは空集合として扱われるので例外にならない）。
+-          - エラー検出は `Get-XlsFormulaErrorCells`（本タスクの内部関数）を UsedRange に対して呼ぶ。
++          - エラー検出は `Get-XlsFormulaErrorCells`（T-10 の内部関数）を UsedRange に対して呼ぶ。
+           - locations の順序はシート順（`Workbook.Worksheets` のタブ順）→セル順（行→列の昇順、
+             `Sort-Object -Property Row, Col` で明示的に確定させる。`SpecialCells` の Areas 列挙順は
+             仕様として保証されていないため頼らない）。決定的であることをテストで固定する。
+@@ -3062,7 +3137,8 @@ function Test-XlsFormulas {
+           - status は total_errors が 0 なら "success"、そうでなければ "errors_found"。数式が
+             1 つもないブックも total_formulas=0 / total_errors=0 / status="success"（error_summary は
+             空オブジェクト）になる。
+-          - 外部リンクの refused 判定（`$Force`/`$TimeoutSec` の実配線含む）は T-11/T-12 の範囲。
++          - refused は正常系（エラーではない）。exit code の扱いは T-12 の範囲。`-TimeoutSec` の
++            Runspace タイムアウト配線も T-12 の範囲（引き続き未使用）。
+     #>
+     [CmdletBinding()]
+     param(
+@@ -3079,6 +3155,21 @@ function Test-XlsFormulas {
+     $result = Invoke-XlsSession -Path $Path -ReadOnly -ScriptBlock {
+         param($app, $wb)
+ 
++        # T-11: 外部リンク refused 判定は CalculateFullRebuild（下の Set-XlsCalculationAutomatic に
++        # 含まれる）より前に行う。再計算するとリンク切れセルが #REF! になり、保存はしない（ReadOnly）
++        # ものの検証結果が汚れるため（タスクカード指定）。-Force のときはこの判定自体をスキップし、
++        # 常に通常フローへ進む。
++        if (-not $Force) {
++            $linkStatus = Get-XlsExternalLinkStatus -Workbook $wb
++            if ($linkStatus.HasMissing) {
++                return [PSCustomObject][ordered]@{
++                    status = 'refused'
++                    reason = 'external links present'
++                    links  = $linkStatus.Links
++                }
++            }
++        }
++
+         # Invoke-XlsSession は Open 直後に Calculation=Manual を強制する（G-06 上の唯一の COM 経路）。
+         # Manual のまま古い値が残っていても正しい結果になるよう、走査前に必ず Automatic + フル再計算
+         # へ戻す（Save-XlsWorkbook と共有する内部ヘルパー。T-04 罠 5 と同じ機序）。
+diff --git a/tests/Test-XlsFormulas.Tests.ps1 b/tests/Test-XlsFormulas.Tests.ps1
+index 69cea48..533109f 100644
+--- a/tests/Test-XlsFormulas.Tests.ps1
++++ b/tests/Test-XlsFormulas.Tests.ps1
+@@ -34,6 +34,13 @@ Save-XlsWorkbook を呼ぶと、ごく稀に最後の 1 セルが保存後のフ
+ CalculateFullRebuild 不足が原因ではない）。単純な Start-Sleep での「一呼吸置く」対処では再現を
+ 安定して防げなかった（実装メモに検証記録あり）ため、Set-XlsFormulaVerified が「書き込み直後に
+ 読み戻して一致することを確認し、一致しなければ再試行する」防御的な書き込みを行う。
++
++T-11（外部リンク検出と refused / -Force）の受け入れテストは末尾の Context
++'external link refused / -Force (T-11)' に追加した（このファイルへの追加。分割は実装判断で
++既存ファイル追加を選択）。上記の Set-XlsFormulaVerified / Set-XlsValue2Verified /
++New-XlsxWithStaleFormulaCache をそのまま再利用し、外部リンク fixture の作成手法自体は
++T-08 Get-XlsModel.Tests.ps1 で確立したもの（存在しないパスへの数式リンクを Invoke-XlsSession 内で
++作成、保存は Save-XlsWorkbook 経由）を踏襲する。
+ #>
+ 
+ $here = Split-Path -Parent $MyInvocation.MyCommand.Path
+@@ -435,4 +442,165 @@ Describe 'Test-XlsFormulas (T-10)' {
+             $errorSeen.Exception.Message | Should Match 'File not found'
+         }
+     }
++
++    Context 'external link refused / -Force (T-11)' {
++        # harness/state/tasks/T-11.md の受け入れテスト要点:
++        #   - 存在しない外部リンクを持つブックで refused が返り、reason/links キーが契約どおり。
++        #   - refused のとき再計算が走っていないこと（stale キャッシュを仕込み、-Force との対比で確認）。
++        #   - -Force で errors_found/success（リンクセルの #REF! を含む通常の検証結果）。
++        #   - リンクなしブックは従来どおり（上の Context 群が回帰として機能。ここでは重複させない）。
++        # 外部リンク fixture の作成手法は T-08 Get-XlsModel.Tests.ps1 で確立したもの
++        # （存在しないパスへの数式リンク "='<dir>\[<file>]<sheet>'!<cell>" を Invoke-XlsSession 内で
++        # 作成し、保存は Save-XlsWorkbook 経由）を再利用する。
++
++        It 'returns a refused result with reason/links, and its shape omits every recalculation-derived key (G-04 contract lock for the refused shape)' {
++            $path = New-TempXlsxPath
++
++            Invoke-XlsSession -Path $path -ScriptBlock {
++                param($app, $wb)
++                $ws = $wb.Worksheets.Item(1)
++                Set-XlsFormulaVerified -Range $ws.Range('A1') -Formula "='C:\NoSuchFolderXYZ_T11\[Other.xlsx]Sheet1'!A1"
++                Save-XlsWorkbook -Workbook $wb -Path $path
++            }
++
++            $result = Test-XlsFormulas -Path $path
++
++            $result.status | Should Be 'refused'
++            $result.reason | Should Be 'external links present'
++            (@($result.links) -join ';') | Should Match ([regex]::Escape('NoSuchFolderXYZ_T11'))
++
++            # refused は success/errors_found とは別の形（total_formulas 等を含まない）。
++            # CalculateFullRebuild を経て初めて埋まる情報が結果に一切現れないことを固定することで、
++            # 「refused のときは再計算していない」ことを構造的に裏付ける（受け入れ要点）。
++            (($result.PSObject.Properties.Name | Sort-Object) -join ',') | Should Be 'links,reason,status'
++        }
++
++        It '-AsJson returns the refused shape with the same key set (G-04 style key-set lock)' {
++            $path = New-TempXlsxPath
++
++            Invoke-XlsSession -Path $path -ScriptBlock {
++                param($app, $wb)
++                $ws = $wb.Worksheets.Item(1)
++                Set-XlsFormulaVerified -Range $ws.Range('A1') -Formula "='C:\NoSuchFolderXYZ_T11\[Other.xlsx]Sheet1'!A1"
++                Save-XlsWorkbook -Workbook $wb -Path $path
++            }
++
++            $json = Test-XlsFormulas -Path $path -AsJson
++            $parsed = $json | ConvertFrom-Json
++
++            $parsed.status | Should Be 'refused'
++            $parsed.reason | Should Be 'external links present'
++            (($parsed.PSObject.Properties.Name | Sort-Object) -join ',') | Should Be 'links,reason,status'
++            ($parsed.links -is [System.Array]) | Should Be $true
++            $parsed.links.Count | Should BeGreaterThan 0
++            ($parsed.links -join ';') | Should Match ([regex]::Escape('NoSuchFolderXYZ_T11'))
++        }
++
++        It 'does not refuse when every external link source resolves to an existing file (links present but none missing)' {
++            $targetPath = New-TempXlsxPath
++            $mainPath = New-TempXlsxPath
++
++            Invoke-XlsSession -Path $targetPath -ScriptBlock {
++                param($app, $wb)
++                $ws = $wb.Worksheets.Item(1)
++                Set-XlsValue2Verified -Range $ws.Range('A1') -Value2 (New-XlsSingleCellArray -Value 42.0)
++                Save-XlsWorkbook -Workbook $wb -Path $targetPath
++            }
++
++            $targetDir = Split-Path -Parent $targetPath
++            $targetLeaf = Split-Path -Leaf $targetPath
++
++            Invoke-XlsSession -Path $mainPath -ScriptBlock {
++                param($app, $wb)
++                $ws = $wb.Worksheets.Item(1)
++                Set-XlsFormulaVerified -Range $ws.Range('A1') -Formula "='$targetDir\[$targetLeaf]Sheet1'!A1"
++                Save-XlsWorkbook -Workbook $wb -Path $mainPath
++            }
++
++            $result = Test-XlsFormulas -Path $mainPath
++
++            $result.status | Should Not Be 'refused'
++            $result.status | Should Be 'success'
++            $result.total_formulas | Should Be 1
++            $result.total_errors | Should Be 0
++        }
++
++        It 'includes both existing and missing external link sources in links when a workbook mixes the two (refuses because at least one is missing)' {
++            $existingTargetPath = New-TempXlsxPath
++            $missingTargetPath = Join-Path (Split-Path -Parent $existingTargetPath) 'NoSuchFolderXYZ_T11_mixed\Other.xlsx'
++            $mainPath = New-TempXlsxPath
++
++            Invoke-XlsSession -Path $existingTargetPath -ScriptBlock {
++                param($app, $wb)
++                $ws = $wb.Worksheets.Item(1)
++                Set-XlsValue2Verified -Range $ws.Range('A1') -Value2 (New-XlsSingleCellArray -Value 7.0)
++                Save-XlsWorkbook -Workbook $wb -Path $existingTargetPath
++            }
++
++            $existingDir = Split-Path -Parent $existingTargetPath
++            $existingLeaf = Split-Path -Leaf $existingTargetPath
++            $missingDir = Split-Path -Parent $missingTargetPath
++            $missingLeaf = Split-Path -Leaf $missingTargetPath
++
++            Invoke-XlsSession -Path $mainPath -ScriptBlock {
++                param($app, $wb)
++                $ws = $wb.Worksheets.Item(1)
++                Set-XlsFormulaVerified -Range $ws.Range('A1') -Formula "='$existingDir\[$existingLeaf]Sheet1'!A1"
++                Set-XlsFormulaVerified -Range $ws.Range('B1') -Formula "='$missingDir\[$missingLeaf]Sheet1'!A1"
++                Save-XlsWorkbook -Workbook $wb -Path $mainPath
++            }
++
++            $result = Test-XlsFormulas -Path $mainPath
++
++            # 存在するリンク（A1 が指す既存ファイル）と欠損リンク（B1 が指す不在ファイル）が
++            # 混在していても refused（少なくとも 1 つ欠損があれば refused）になり、links には
++            # 「欠損分だけ」ではなく両方が含まれる（実装判断の回帰。round 1 レビュー nit 対応）。
++            $result.status | Should Be 'refused'
++            $result.links.Count | Should Be 2
++            (($result.links | Sort-Object) -join '|') |
++                Should Be ((@($existingTargetPath, $missingTargetPath) | Sort-Object) -join '|')
++        }
++
++        It '-Force skips the refused check and performs a real recalculation, revealing a stale-cache error' {
++            $path = New-TempXlsxPath
++
++            Invoke-XlsSession -Path $path -ScriptBlock {
++                param($app, $wb)
++                $ws = $wb.Worksheets.Item(1)
++                Set-XlsValue2Verified -Range $ws.Range('A1') -Value2 (New-XlsSingleCellArray -Value 5.0)
++                Set-XlsFormulaVerified -Range $ws.Range('A2') -Formula '=100/A1'
++                Set-XlsFormulaVerified -Range $ws.Range('B1') -Formula "='C:\NoSuchFolderXYZ_T11b\[Other.xlsx]Sheet1'!A1"
++                Save-XlsWorkbook -Workbook $wb -Path $path
++            }
++
++            # A1 を 5→0 に直接（ZIP 経由、COM を使わず）書き換える。A2（=100/A1）のキャッシュ済み
++            # <v> は 20（エラーなし）のまま残る（T-10 New-XlsxWithStaleFormulaCache と同じ機序）。
++            # この対比は -Force が CalculateFullRebuild に到達することを確認するためのもの
++            # （refused 呼び出しは ReadOnly セッションを保存しないため、「再計算だけして保存しない」場合と
++            # 「再計算そのものをしない」場合はディスク上のファイルからは区別できない。round 1 レビュー
++            # should-fix 指摘のとおり）。refused 側が実際に未再計算であることは、この対比テストではなく
++            # `skill/scripts/XlsAgent.psm1` のコード順序（早期 return が Set-XlsCalculationAutomatic
++            # より前にある）そのもので保証されている。
++            New-XlsxWithStaleFormulaCache -Path $path -OldPrecedentValue '5' -NewPrecedentValue '0'
++
++            $refused = Test-XlsFormulas -Path $path
++            $refused.status | Should Be 'refused'
++
++            $forced = Test-XlsFormulas -Path $path -Force
++
++            $forced.status | Should Be 'errors_found'
++            $forced.total_formulas | Should Be 2
++            $forced.total_errors | Should Be 2
++
++            $forced.error_summary.'#DIV/0!'.count | Should Be 1
++            (@($forced.error_summary.'#DIV/0!'.locations) -join ',') | Should Be 'Sheet1!A2'
++
++            $forced.error_summary.'#REF!'.count | Should Be 1
++            (@($forced.error_summary.'#REF!'.locations) -join ',') | Should Be 'Sheet1!B1'
++
++            # -Force でも success/errors_found の通常契約（G-04）は変わらない。links キーは追加されない。
++            (($forced.PSObject.Properties.Name | Sort-Object) -join ',') |
++                Should Be 'error_summary,status,total_errors,total_formulas'
++        }
++    }
+ }

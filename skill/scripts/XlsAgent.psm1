@@ -3017,6 +3017,56 @@ function Get-XlsFormulaErrorCells {
     return , $results.ToArray()
 }
 
+function Get-XlsExternalLinkStatus {
+    <#
+    .SYNOPSIS
+        ワークブックの Excel 形式外部リンク（`Workbook.LinkSources(xlExcelLinks)`）のリンク元パス
+        一覧と、そのうち 1 つでもファイルシステム上に存在しないものがあるかを返す。
+        Test-XlsFormulas の内部関数（T-11、外部リンク refused 判定）。COM は
+        `Workbook.LinkSources` の読み取りのみ（Invoke-XlsSession の ScriptBlock 内から呼ばれる前提。
+        G-06）。Export しない。
+    .PARAMETER Workbook
+        対象の Workbook COM オブジェクト。
+    .EXAMPLE
+        Get-XlsExternalLinkStatus -Workbook $wb
+    .NOTES
+        実機確認（プローブ実行、実装メモ参照）:
+          - `LinkSources(xlExcelLinks)` はリンクが 1 つもなければ `$null`。1 つ以上あれば
+            （リンク数が 1 でも）常に 1-based の `string[]`（Areas/Value2 のような「1 件ならスカラー」
+            パターンにはならない）を返す。要素はリンク先ブックファイルへのプレーンなパス
+            （例 `'C:\NoSuch\Other.xlsx'`）で、`[シート名]` やセル参照部分は含まれない。
+            `Test-Path -LiteralPath` でそのままファイル存在確認ができる。
+          - 解決済み（リンク先が存在する）リンクも未解決リンクと同じ形でこの一覧に含まれる
+            （T-08 Get-XlsModel の `workbook.links` と同じ挙動・同じ COM 呼び出し）。
+        実装判断: `Links` には LinkSources が返す全パスを含める（存在するものも含む）。
+        欠損分だけに絞らなかった理由は Test-XlsFormulas の .NOTES 参照。
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        $Workbook
+    )
+
+    $linksOut = New-Object System.Collections.ArrayList
+    $hasMissing = $false
+
+    $rawLinkSources = $Workbook.LinkSources($script:Xl.xlExcelLinks)
+    if ($null -ne $rawLinkSources) {
+        foreach ($link in $rawLinkSources) {
+            $linkPath = [string]$link
+            [void]$linksOut.Add($linkPath)
+            if (-not (Test-Path -LiteralPath $linkPath)) {
+                $hasMissing = $true
+            }
+        }
+    }
+
+    return [PSCustomObject][ordered]@{
+        Links      = @($linksOut.ToArray())
+        HasMissing = $hasMissing
+    }
+}
+
 function Test-XlsFormulas {
     <#
     .SYNOPSIS
@@ -3027,14 +3077,16 @@ function Test-XlsFormulas {
         再計算のタイムアウト秒数（既定 30）。T-10 時点では未使用（T-12 の CLI ラッパーで配線予定。
         実装メモ参照）。
     .PARAMETER Force
-        外部リンク先が見つからない場合でも再計算を続行する。T-10 時点では未使用（外部リンク検出は
-        T-11 の範囲）。
+        外部リンク先が見つからない場合の refused 判定をスキップし、通常の検証フロー
+        （CalculateFullRebuild → エラー走査）をそのまま実行する（T-11）。
     .PARAMETER AsJson
         指定した場合、オブジェクトではなく JSON 文字列（recalc.py 完全互換のキー名）で返す。
     .EXAMPLE
         Test-XlsFormulas -Path 'C:\tmp\book.xlsx'
     .EXAMPLE
         Test-XlsFormulas -Path 'C:\tmp\book.xlsx' -AsJson
+    .EXAMPLE
+        Test-XlsFormulas -Path 'C:\tmp\book.xlsx' -Force
     .NOTES
         戻り値の形（G-04、recalc.py と完全一致させる。一字も変えない）:
           { status: "success" | "errors_found",
@@ -3042,15 +3094,38 @@ function Test-XlsFormulas {
             total_errors: int,
             error_summary: { "#REF!": { count: int, locations: ["Sheet1!B5", ...], locations_truncated: int }, ... } }
 
+        外部リンク refused の戻り値の形（T-11、01-design.md §3.6）:
+          { status: "refused", reason: "external links present", links: ["C:\...\Other.xlsx", ...] }
+        上記の success/errors_found の形とは別物（total_formulas 等のキーは含まない）。$Force を
+        指定すると refused 判定自体を行わず、常に success/errors_found の形で返す。
+
         実装判断（詳細は実装メモ）:
           - `Invoke-XlsSession -ReadOnly` で開く（検証専用、ファイルは変更しない）。開いた直後は
             Invoke-XlsSession が Calculation=Manual を強制するため、`Set-XlsCalculationAutomatic`
             （T-04/Save-XlsWorkbook と共有する内部ヘルパー）で Automatic に戻し
             `CalculateFullRebuild` を実行してから走査する。Manual のまま古い値が残ったブックでも
             正しい結果になる（T-04 罠 5 と同じ機序。実装メモにこの機序を利用したテストの説明あり）。
+          - 外部リンク refused 判定（T-11）は `Set-XlsCalculationAutomatic`（= CalculateFullRebuild を
+            含む）より**前**に行う。タスクカード指定どおり: 再計算するとリンクセルが #REF! になり、
+            保存はしない（ReadOnly）ものの検証結果が汚れるため、判定用の `Get-XlsExternalLinkStatus`
+            （本タスクの内部関数）は `Workbook.LinkSources` を読むだけで再計算を一切要求しない。
+            `$Force` が指定されている間はこの判定自体をスキップする（Get-XlsExternalLinkStatus すら
+            呼ばない。リンク切れの有無に関わらず常に通常フローへ進む）。
+          - refused 条件: `LinkSources(xlExcelLinks)` が非 null かつ、そのうち 1 つでも
+            `Test-Path -LiteralPath` で存在しないパスがある場合。全リンク先が存在するなら
+            （リンクはあっても）refused にはせず通常フローで続行する。
+          - refused の `links` フィールドの内容（実装判断）: LinkSources が返す全リンクパスを含める
+            （存在するものも含む。欠損分だけに絞らない）。理由: (1) T-08 Get-XlsModel の
+            `workbook.links` が既に「LinkSources の生の全件」という契約で実装・テスト済みであり、
+            同じ COM 呼び出し・同じ値を refused でも再利用することで挙動を一貫させた。(2)「欠損分だけ」
+            にすると "存在するリンクは省略する" という新しい絞り込みルールを別途定義・文書化する
+            必要が生じ、エージェント側が Get-XlsModel の links と refused の links を同じ意味だと
+            誤解する余地を減らせる。(3) refused を見たエージェントが SKILL.md の指示どおり
+            `Get-XlsRange` でリンク値を退避する際、どのセル/リンクが対象かの全体像が links 1 個で
+            揃う方が扱いやすい。
           - total_formulas はシートごとに `Get-XlsFormulaCellKeySet`（T-08 と共有）の `.Count` を
             UsedRange に対して求めて合算する（数式セルなしは空集合として扱われるので例外にならない）。
-          - エラー検出は `Get-XlsFormulaErrorCells`（本タスクの内部関数）を UsedRange に対して呼ぶ。
+          - エラー検出は `Get-XlsFormulaErrorCells`（T-10 の内部関数）を UsedRange に対して呼ぶ。
           - locations の順序はシート順（`Workbook.Worksheets` のタブ順）→セル順（行→列の昇順、
             `Sort-Object -Property Row, Col` で明示的に確定させる。`SpecialCells` の Areas 列挙順は
             仕様として保証されていないため頼らない）。決定的であることをテストで固定する。
@@ -3062,7 +3137,8 @@ function Test-XlsFormulas {
           - status は total_errors が 0 なら "success"、そうでなければ "errors_found"。数式が
             1 つもないブックも total_formulas=0 / total_errors=0 / status="success"（error_summary は
             空オブジェクト）になる。
-          - 外部リンクの refused 判定（`$Force`/`$TimeoutSec` の実配線含む）は T-11/T-12 の範囲。
+          - refused は正常系（エラーではない）。exit code の扱いは T-12 の範囲。`-TimeoutSec` の
+            Runspace タイムアウト配線も T-12 の範囲（引き続き未使用）。
     #>
     [CmdletBinding()]
     param(
@@ -3078,6 +3154,21 @@ function Test-XlsFormulas {
 
     $result = Invoke-XlsSession -Path $Path -ReadOnly -ScriptBlock {
         param($app, $wb)
+
+        # T-11: 外部リンク refused 判定は CalculateFullRebuild（下の Set-XlsCalculationAutomatic に
+        # 含まれる）より前に行う。再計算するとリンク切れセルが #REF! になり、保存はしない（ReadOnly）
+        # ものの検証結果が汚れるため（タスクカード指定）。-Force のときはこの判定自体をスキップし、
+        # 常に通常フローへ進む。
+        if (-not $Force) {
+            $linkStatus = Get-XlsExternalLinkStatus -Workbook $wb
+            if ($linkStatus.HasMissing) {
+                return [PSCustomObject][ordered]@{
+                    status = 'refused'
+                    reason = 'external links present'
+                    links  = $linkStatus.Links
+                }
+            }
+        }
 
         # Invoke-XlsSession は Open 直後に Calculation=Manual を強制する（G-06 上の唯一の COM 経路）。
         # Manual のまま古い値が残っていても正しい結果になるよう、走査前に必ず Automatic + フル再計算
