@@ -1,0 +1,1995 @@
+diff --git a/harness/state/board.md b/harness/state/board.md
+index 2f0b772..5991714 100644
+--- a/harness/state/board.md
++++ b/harness/state/board.md
+@@ -12,7 +12,7 @@
+ | T-06 | Get-XlsRange | done | r4 | 2026-08-17 |
+ | T-07 | Get-XlsOverview | done | r1 | 2026-08-17 |
+ | T-08 | Get-XlsModel | done | r1 | 2026-08-17 |
+-| T-09 | Set-XlsRange | impl | r1 | 2026-08-17 |
++| T-09 | Set-XlsRange | review | r1 | 2026-08-17 |
+ | T-10 | Test-XlsFormulas 関数 | todo | - | |
+ | T-11 | 外部リンク refused / -Force | todo | - | |
+ | T-12 | Test-XlsFormulas.ps1 CLI | todo | - | |
+diff --git a/harness/state/handoff/T-09.diff b/harness/state/handoff/T-09.diff
+new file mode 100644
+index 0000000..e69de29
+diff --git a/harness/state/reviews/T-09.md b/harness/state/reviews/T-09.md
+new file mode 100644
+index 0000000..203ec7c
+--- /dev/null
++++ b/harness/state/reviews/T-09.md
+@@ -0,0 +1,107 @@
++# Review T-09 (round 1)
++
++## 判定: done
++
++## テスト実行
++
++- コマンド: 未実行（予定: `Invoke-Pester -Path tests\Set-XlsRange.Tests.ps1 -PassThru`、`Invoke-Pester -Path tests -PassThru`）
++- 結果: passed - / failed -。read-only サンドボックスで、PowerShell が `codex-windows-sandbox-setup.exe` 欳落により起動できなかったため、コード読解で代替した。実装者記録の対象 57/57・全体 179/179 は独立検証できていない。
++- EXCEL.EXE 差分: 未確認（PowerShell を起動できず、Excel 自体は起動していない）
++
++## チェックリスト
++
++| # | 項目 | ○/×/- | メモ |
++|---|---|---:|---|
++| C-1 | 関数シグネチャが §3 と一致 | ○ | `-Data` は設計の `[object[,]]` から `[object]` 相当に緩和されているが、タスクカードが Get 側のジャグ配列／オブジェクト配列を受け入れるため明示的に許可している。実行時の形状検証もあり、設計の「2次元データ」という趣旨を維持。 |
++| C-2 | 戻り値の形が設計と一致 | ○ | Set は出力せず、Data/CSV/JSON を共通の矩形グリッドへ正規化する。 |
++| C-3 | Test-XlsFormulas JSON 契約 | - | T-10 の対象。 |
++| C-4 | exit code 契約 | - | T-10 の対象。 |
++| C-5 | §0 の確定事項に変更なし | ○ | COM、PowerShell 5.1、外部依存なしを維持。 |
++| C-6 | タスク範囲外を触っていない | ○ | board、タスクカード、T01 の実装済み関数リスト更新は通常の付随変更。 |
++| S-1 | GetActiveObject なし | ○ | 追加コードに使用なし。 |
++| S-2 | COM がセッション外に漏れない | ○ | 本体・統合テストの COM 操作は `Invoke-XlsSession` の ScriptBlock 内で実行。 |
++| S-3 | finally の終了順序 | ○ | 既存セッション終了処理に変更なし。 |
++| S-4 | throw 後にプロセスが残らない | ○ | 無効範囲・寸法不一致・行長不一致の統合テストと `AfterEach` 検査あり。実行確認はできていない。 |
++| S-5 | Value2 を使用 | ○ | 書き込みは最終行の `Range.Value2` のみ。 |
++| S-6 | 2次元代入が `[object[,]]` | ○ | `ConvertTo-XlsValue2Grid` が単一の `[object[,]]` を構築し、`Value2` へ1回だけ代入。セル単位 COM ループなし。 |
++| S-7 | SpecialCells 例外処理 | - | 使用なし。 |
++| S-8 | 危険な Close(SaveChanges:=true) なし | ○ | 追加なし。 |
++| S-9 | Excel 全殺しなし | ○ | 追加なし。 |
++| S-10 | ReadOnly・STA 検査 | - | T-03 の対象。 |
++| P-1 | `#Requires -Version 5.1` | ○ | モジュール・テストともあり。 |
++| P-2 | PowerShell 7 専用構文なし | ○ | 静的確認済み。 |
++| P-3 | ファイル I/O に UTF-8 明示 | × | 本体のCSV/JSON読み込みは明示済みだが、不正JSONテストの `WriteAllText` がエンコーディング未指定。 |
++| P-4 | Pester 3.4 互換構文 | ○ | `Should Be` 形式で、コード読解上は互換。 |
++| T-1 | Pester が緑 | - | サンドボックス制約により未実行。 |
++| T-2 | AfterEach に残留検査 | ○ | `Assert-NoOrphanExcel` あり。 |
++| T-3 | 実 Excel の統合テスト | ○ | モックではなく `Invoke-XlsSession` を使用。 |
++| T-4 | 受け入れ要点を網羅 | × | 1900体系の Set→Get 日付往復はあるが、Date1904 の公開関数経由の Set→Get 往復がない。純粋関数と生 Value2 の片方向検証に留まる。 |
++| T-5 | 異常系テスト | ○ | ファイル不在、不正JSON、不正範囲、明示範囲との寸法不一致、行長不一致を検証。 |
++| Q-1 | コメントベースヘルプ | ○ | 公開関数と追加内部関数にあり。 |
++| Q-2 | 次の一手が分かるエラー | × | 架空日 `1900-02-29` の不正な時刻では未処理の `TimeSpan.ParseExact` 例外が漏れる。 |
++| Q-3 | COM 定数の集約・文書化 | - | 新規定数なし。 |
++| Q-4 | COM の罠を実装メモに記録 | ○ | 多次元添字、BOM、配列平坦化、JSON、0-based 書き込みを詳細に記録。 |
++| Q-5 | 自己チェック欄が事実と一致 | ○ | 静的項目は一致。G-15 のテスト結果だけは独立検証できていない。 |
++
++## 指摘
++
++### [should-fix] 「厳密な逆関数」が成立する範囲とDate1904往復テストが不足
++
++- 場所: `skill/scripts/XlsAgent.psm1:1703`、`skill/scripts/XlsAgent.psm1:2221`、`tests/Set-XlsRange.Tests.ps1:111`
++- 内容: Date1904 の `-1462`、serial 60 の特別処理、1900-01-01〜02-28 に対応する OADate `[2,61)` の `-1` は、秒単位かつ正準なシリアル値について Get 側と正しく対称である。一方、Get は `yyyy-MM-ddTHH:mm:ss` までしか出力しないため、サブ秒を含むシリアル値は必ず丸められ、数学的な意味で全 `[double]` の厳密な逆関数にはならない。また負の小数 OADate は同じ DateTime に正負2通りの表現があり、例えば `-0.5` は ISO 化後に `+0.5` へ正準化され得る。現テスト名の “arbitrary serials” はこの制約を表していない。さらに Date1904 の統合テストは生 Value2 の確認だけで、タスクカードが求める公開 `Set→Get` 往復を検証していない。
++- 修正案: 対称性の保証範囲を「Get が表現できる秒単位・正準 OADate」に明記してテスト名を修正し、Date1904 ブックで複数の ISO 日付／日時を `Set-XlsRange` から `Get-XlsRange` まで往復する統合テストを追加する。全 double の厳密往復を要求するなら、Get 側の小数秒出力を含む別タスクの設計変更が必要。
++
++```powershell
++$wb.Date1904 = $true
++$ws.Range('A1:A3').NumberFormat = 'yyyy-mm-dd hh:mm:ss'
++$expected = @('1904-01-01', '1904-02-29', '2024-01-02T12:34:56')
++
++Set-XlsRange -Worksheet $ws -Range 'A1' -Data @(
++    @($expected[0]),
++    @($expected[1]),
++    @($expected[2])
++)
++$actual = Get-XlsRange -Worksheet $ws -Range 'A1:A3'
++```
++
++### [should-fix] 架空日の不正な時刻だけ未処理例外になる
++
++- 場所: `skill/scripts/XlsAgent.psm1:2202`
++- 内容: `1900-02-29T25:00:00` は ISO 形状の正規表現に一致して架空日分岐へ入り、`TimeSpan.ParseExact` が捕捉されず例外を投げる。通常日付の `2024-02-30` は `$null` を返して元文字列を書き込むため、実装メモで宣言した「形状は合うが無効な日時は文字列のまま」という挙動と不整合。
++- 修正案: 架空日の時刻解析も `try/catch` または `TryParseExact` で囲み、失敗時は `$null` を返す。`ConvertTo-XlsWriteCellValue` 経由で元文字列が維持されるテストも追加する。
++
++```powershell
++try {
++    $ts = [TimeSpan]::ParseExact(
++        $Matches['time'],
++        'hh\:mm\:ss',
++        [Globalization.CultureInfo]::InvariantCulture
++    )
++}
++catch {
++    return $null
++}
++```
++
++### [should-fix] 不正JSONフィクスチャの文字コードが暗黙
++
++- 場所: `tests/Set-XlsRange.Tests.ps1:392`
++- 内容: `[IO.File]::WriteAllText($badPath, 'not valid json {{{')` がエンコーディングを指定しておらず、S-01／P-3 の「ファイル I/O は UTF-8 明示」に一致しない。内容がASCIIだけなので現在のテスト結果には影響しにくいが、規約上は明示すべき。
++- 修正案:
++
++```powershell
++[IO.File]::WriteAllText(
++    $badPath,
++    'not valid json {{{',
++    [Text.Encoding]::UTF8
++)
++```
++
++## 良かった点（1〜2 行、次のタスクでも続けてほしいこと）
++
++G-08 は徹底されており、セル値の正規化ループは純粋な配列構築だけ、COM 書き込みは単一 `[object[,]]` の1回代入だけになっている。CSV の空欄／真偽値／doubleという最小推論も、型情報を失う文字列の曖昧さを明記したうえで Get 側の出力と整合している。
++
++## SKILL.md gotchas 候補（実装メモに書かれていないが気づいた罠があれば）
++
++- `yyyy-MM-ddTHH:mm:ss` への変換はサブ秒を失うため、ISO 化とシリアル化は全 double 上の厳密な全単射ではない。
++- OADate の負の小数表現は同一 DateTime に正負2通りの値が対応し得るため、Get→Set で正準化される場合がある。
+\ No newline at end of file
+diff --git a/harness/state/tasks/T-09.md b/harness/state/tasks/T-09.md
+index 25669d5..4e3f7f1 100644
+--- a/harness/state/tasks/T-09.md
++++ b/harness/state/tasks/T-09.md
+@@ -46,13 +46,139 @@
+ 
+ ## 実装メモ(Sonnet が記入)
+ 
++### 実装の概要
++`skill/scripts/XlsAgent.psm1` に `Set-XlsRange` を本実装した。既存の ParameterSet 骨組み(T-01)は
++`ByData`/`ByCsv`/`ByJson` の 3 択のまま維持し、`-Data` の型注釈だけ `[object[,]]` から外した(下記)。
++内部は「入力を行の配列の配列(ジャグ配列)へ正規化する」→「各セルを `ConvertTo-XlsWriteCellValue` で
++Value2 に書ける値へ変換しつつ `[object[,]]` を 1 個組み立てる(`ConvertTo-XlsValue2Grid`)」→
++「範囲を解決し(単一セルなら Resize)、`Range.Value2 = $grid` を 1 回だけ代入する」という 3 段構成。
++
++### 仕様の具体化で下した実装判断
++- **`-Data` の型**: 01-design.md §3.5 は `<object[,]>` だが、タスクカードの指示どおり型注釈を外し
++  (`[AllowNull()] $Data` のみ)、`ConvertTo-XlsWriteRows` が実行時に形を判定する。
++  1. `.Rank -eq 2` の配列 → `[object[,]]` として直接展開。
++  2. それ以外の 1 次元コレクションで `-Header` 指定 → 各要素を名前付きオブジェクト
++     (PSCustomObject/IDictionary)とみなし、先頭要素のプロパティ/キー順をヘッダー行にして
++     `ConvertFrom-XlsHeaderObjectsToRows` で復元(`Get-XlsRange -Header` の戻り値をそのまま渡せる)。
++  3. それ以外(`-Header` なし)→ 各要素をそのまま 1 行(値の配列)とみなす。要素が文字列や
++     非列挙型なら「フラットな `@(1,2,3)` を 1 行 3 列/3 行 1 列のどちらとも機械的に推測しない」
++     という方針で、次の一手が分かる例外にする。
++- **`-FromCsv` の型推論**: pandas の `read_csv` 相当のフル型推論はせず、`Get-XlsRange -AsCsv`
++  (`ConvertTo-XlsCsvField`)の出力と正確に対になる最小限だけ行う: 空文字列→`$null`、大文字小文字が
++  完全一致する `'True'`/`'False'`→真偽値(`'true'` 等は文字列のまま)、不変カルチャで
++  `[double]::TryParse` できる→倍精度実数、それ以外は文字列(ISO 日付判定は後段の共通変換に委ねる)。
++  「テキストとして入力された "42" が CSV 往復で数値化する」という曖昧さは、CSV が型情報を保持しない
++  フォーマットである以上の設計上の限界として許容する(pandas と同種の制約)。
++- **`-FromJson` の形**: `-Header` なしはジャグ配列の JSON、`-Header` 付きはオブジェクト配列の JSON
++  (`Get-XlsRange -AsJson` の両出力形式)を受け付ける。オブジェクト配列の復元は `-Data -Header` と
++  同じ `ConvertFrom-XlsHeaderObjectsToRows` を共有する。
++- **`-Header` と `-FromCsv` の組み合わせ**: 効果を持たせない(no-op)。`Get-XlsRange -AsCsv` の出力
++  バイト列は `-Header` の有無で変わらない(CSV はヘッダー行かどうかを区別しないフォーマット。T-06
++  実装メモ)ため、対称性を保つには Set 側も CSV の全行をそのまま書き込むのが自然と判断した。
++- **ISO 日付文字列 → シリアル値**: `Test-XlsIsoDateString`(`yyyy-MM-dd` / `yyyy-MM-ddTHH:mm:ss` に
++  一致するかを判定)と `ConvertFrom-XlsIsoDateStringToSerial`(T-06 の `ConvertTo-XlsIsoDateString` の
++  厳密な逆関数)を新設した。逆変換規則:
++  - Date1904: `dt.ToOADate() - 1462.0`。
++  - 1900 年体系の架空閏日 `1900-02-29`(＋任意の時刻)は `[DateTime]` で表現できないため特別扱いし、
++    serial 60(＋時刻の端数)を直接返す。
++  - それ以外の 1900 年体系: `dt.ToOADate()` が `[2.0, 61.0)` の範囲(1900-01-01〜1900-02-28 の実在日付
++    が写る範囲)にあれば `-1.0`、それ以外(serial 0 以下・61 以降)はそのまま。
++  - 正規表現には一致するが実在しない日付(`2024-02-30` 等)は `ParseExact` が例外→ `$null` を返し、
++    呼び出し元(`ConvertTo-XlsWriteCellValue`)はそのまま元の文字列を書く。
++  - 純粋関数レベルで `ConvertTo-XlsIsoDateString` → `ConvertFrom-XlsIsoDateStringToSerial` の往復が
++    元のシリアル値に戻ることを、境界値(1900/1904 双方)に加えてランダムでない複数の代表値で確認した
++    (テストの「round-trips arbitrary serials」)。
++- **`$null` → 空セル**: `ConvertTo-XlsWriteCellValue` がそのまま `$null` を通す(タスクカード指定どおり)。
++- **NumberFormat は一切変更しない**(タスクカード指定)。そのため、書き込み先セルが元々日付書式で
++  なければ書き込んだ日付は Excel 上では素の数値として表示される。これは仕様どおりの既知のトレード
++  オフであり、テストでは「日付の往復」を検証する際に対象範囲へあらかじめ `NumberFormat` を設定してから
++  `Set-XlsRange` を呼ぶ(Set はそれを一切変更しないので順序はどちらでもよい)。「NumberFormat を変更
++  しない」こと自体も 1 本のテストで直接確認した。
++- **寸法と自動拡張**: `-Range` の解決結果が 1x1(単一セル)のときだけ `Range.Resize(rows, cols)` で
++  データの寸法に自動拡張する。複数セルの範囲を明示していてデータ寸法と一致しない場合は、両方の
++  寸法を含む次の一手が分かる例外にする(異常系の受け入れ要点)。
++- **行の列数不一致**: ジャグ配列の各行が同じ列数でない場合、矩形の `[object[,]]` を組み立てられない
++  ため、何行目が何列だったかを含む例外にする(欠損セルを黙って `$null` 埋めしない実装判断)。
++- **G-08**: `ConvertTo-XlsValue2Grid` で組み立てた 1 個の `[object[,]]` を `Range.Value2 = $grid` に
++  1 回だけ代入する。関数内に `foreach` で `Cells(r,c)` へ代入する経路は存在しない。
++
++### 踏んだ罠
++1. **多次元配列インデックスをメソッド呼び出しの引数に直接埋め込むと構文エラーになる**:
++   `[void]$row.Add($Array[$r, $c])` のように、カンマ区切りの多次元インデックス `$Array[$r, $c]` を
++   `.Add(...)` の引数リストへ直接書くと、PowerShell のパーサーがインデックスのカンマを引数区切りの
++   カンマと誤認し、「配列インデックス式の後に ']' がありません」という構文エラーになる
++   (`$x = $Array[$r, $c]` という単純代入や、`foo($Array[$r, $c])`(コマンド構文の呼び出し)では
++   再現しない。`.Add(($Array[$r, $c]))` のように追加の括弧で包むか、いったんローカル変数に
++   取り出せば回避できる)。既存コード(T-06/T-08)にはこの埋め込みパターンがなかったため今回初めて
++   踏んだ。`ConvertFrom-XlsObjectArray2DToRows` で温存変数 `$cellValue` を経由する形に直した。
++   SKILL.md gotchas 候補。
++2. **`.ps1`/`.psm1` に日本語コメントを書く場合、UTF-8 **BOM 付き**で保存しないと
++   PowerShell 5.1 のパーサーが構文エラーを起こす**: 新規作成した `tests/Set-XlsRange.Tests.ps1` を
++   BOM なし UTF-8 で書いたところ、`Invoke-Pester`/`Parser::ParseFile` 双方で無関係な位置
++   (ファイル末尾付近)に「予期しないトークン '}'」という構文エラーが出た。原因は、BOM がないと
++   既定の(日本語ロケールの)ANSI コードページとして読み込まれ、UTF-8 の日本語コメント中のバイト列が
++   Shift-JIS 的にマルチバイト文字として誤解釈され、直後の改行バイト(0x0A)を「2 バイト文字の
++   後半」として飲み込んでしまい、行がまたがって見えなくなる(`Get-Content`(既定エンコーディング)で
++   数えた行数が実際より 13 行少なくなる事象で再現を確認した)。BOM 付き UTF-8 で保存し直したら
++   解消した。CLAUDE.md/harness の規約(`.ps1` は UTF-8 BOM 保存)どおりだが、今回 Write ツールで
++   新規作成したファイルには既定で BOM が付かなかったため、明示的に BOM を付け直す必要があった。
++   SKILL.md gotchas 候補(テスト作成者向け)。
++3. **`@(@(1.0, 2.0))` は内側の配列を展開して 1 段階「平坦化」される**(1 行 2 列ではなく 2 行 1 列に
++   なる): 自作テストの `New-XlsObjectArray2D -Rows @(@(1.0, 2.0))` で、意図した「1 行 2 列」ではなく
++   「2 行 1 列」の `[object[,]]` ができてしまい、テストが期待と違う値で失敗した。`tests/Get-XlsRange.Tests.ps1`
++   が既に `@(, @(1.0, 2.0, 3.0))`(先頭にカンマ)というパターンで単一行のジャグ配列を作っているのと
++   同じ理由(`@(expr)` は `expr` が既に列挙可能ならその要素を列挙して新しい配列に詰め直すだけで、
++   ネストした配列をそのまま 1 要素として保持しない)。実装のバグではなくテスト側の既知の罠の踏み直し
++   だったため、テストを `@(, @(1.0, 2.0))` に修正した。
++4. (T-06 実装メモから踏襲・再確認)`ConvertFrom-Json` の呼び出し自体を `@(...)` で包むと二重ラップに
++   なる一方、戻り値をいったん変数へ直接代入すると要素数 1 の JSON 配列は代入時にアンラップされる。
++   `Import-XlsJsonRows` では `$parsedRaw = ConvertFrom-Json -InputObject $text`(直接代入、呼び出し自体は
++   `@()` で包まない)→ その**変数**を `$parsed = @($parsedRaw)` で包み直す、という 2 段階パターンを
++   使い、要素数 0/1/2 以上のいずれでも正しい配列になることを確認した。
++5. 読み取り側(Get-XlsRange)は 1-based で Value2 の 2 次元配列を marshaling するのに対し、書き込み側
++   (`Range.Value2 = [object[,]]`)は 0-based の配列を素直に受け付ける非対称性は T-06 実装メモ・
++   `Common.ps1` の `New-XlsObjectArray2D` に既に記録済みで、`ConvertTo-XlsValue2Grid` も
++   `[Array]::CreateInstance([object], $rowCount, $colCount)`(既定 0-based)をそのまま使い、この既知の
++   非対称性を踏襲した(新たに踏んだ罠ではないが、レビュー指示に従いここでも明記)。
++6. `tests/T01.Tests.ps1` の `$script:StillStubFunctions` 除外リストに `Set-XlsRange` を追加した。
++   これを追加しないと「スタブ関数は throw を含む」というテストが、`Set-XlsRange` 本実装後も
++   (範囲不正・寸法不一致等の正当な検証 throw のおかげで)偶然グリーンのままになり、スタブ卒業の
++   事実を記録し損ねる(T-03〜T-08 が確立した既存の慣習をそのまま踏襲。T-09 固有のブックキーピングで
++   あり、隣の公開関数の実装には触れていない)。
++
++### レビュー指摘への対応（round 1、harness/state/reviews/T-09.md、判定 done・blocking ゼロ）
++
++- **[should-fix] 「厳密な逆関数」が成立する範囲と Date1904 往復テストが不足** → 対応した。
++  `ConvertFrom-XlsIsoDateStringToSerial` の `.NOTES` に「この関数が保証する往復の範囲」を追記し、
++  保証対象を「`Get-XlsRange` が実際に出力しうる、秒単位・正準（canonical）な OADate」に限定する
++  ことを明記した（サブ秒切り捨てと、負の小数 OADate の正準化により全 `[double]` の厳密な全単射では
++  ないことを明記）。`tests/Set-XlsRange.Tests.ps1` のテスト名を
++  `round-trips arbitrary serials ...` から `round-trips second-granularity canonical serials
++  representable by Get ...` に変更し、コメントで保証範囲を明記した。レビュー指摘のスニペットに
++  準拠した統合テスト `round-trips date-only, fictitious-leap-day, and date-time ISO strings through
++  the public Set-XlsRange -> Get-XlsRange path in a Date1904 workbook`（1904-01-01・1904-02-29・
++  時刻付き日時の 3 パターン、公開関数経由）を追加した。
++- **[should-fix] 架空日の不正な時刻だけ未処理例外になる** → 対応した。
++  `ConvertFrom-XlsIsoDateStringToSerial` の架空日 `1900-02-29` 分岐で `[TimeSpan]::ParseExact` を
++  `try/catch` で囲み、失敗時は他の実在しない日付と同じく `$null` を返すようにした
++  （`skill/scripts/XlsAgent.psm1`）。回帰テストを 2 本追加: 純粋関数レベルで
++  `ConvertFrom-XlsIsoDateStringToSerial -Text '1900-02-29T99:99:99'` が例外を投げず `$null` を返す
++  こと、`ConvertTo-XlsWriteCellValue` 経由で同じ入力が例外を投げず元の文字列のまま返ることの両方を
++  確認する。
++- **[should-fix] 不正 JSON フィクスチャの文字コードが暗黙** → 対応した。
++  `tests/Set-XlsRange.Tests.ps1` の不正 JSON テストで
++  `[IO.File]::WriteAllText($badPath, 'not valid json {{{')` に `[Text.Encoding]::UTF8` を明示した
++  （レビュー指摘のスニペットどおり）。
++
++対応後、`tests\Set-XlsRange.Tests.ps1` 単体・全体回帰とも緑（下記）で、EXCEL.EXE 残骸ゼロを確認した。
++
+ ## 自己チェック
+ | # | 項目 | ○/× |
+ |---|---|---|
+-| G-05 | GetActiveObject を使っていない | |
+-| G-06 | COM は Invoke-XlsSession 内のみ | |
+-| G-07 | Assert-NoOrphanExcel が AfterEach にある | |
+-| G-08 | Value2 代入は [object[,]] のみ | |
+-| G-11 | 7 専用構文なし | |
+-| G-13 | Pester テストがある | |
+-| G-15 | テストは緑 | |
++| G-05 | GetActiveObject を使っていない | ○ |
++| G-06 | COM は Invoke-XlsSession 内のみ | ○ |
++| G-07 | Assert-NoOrphanExcel が AfterEach にある | ○ |
++| G-08 | Value2 代入は [object[,]] のみ | ○ |
++| G-11 | 7 専用構文なし | ○ |
++| G-13 | Pester テストがある | ○ |
++| G-15 | テストは緑 | ○(tests/Set-XlsRange.Tests.ps1: 57/57、全体回帰 tests: 179/179) |
+diff --git a/harness/state/tasks/T-10.md b/harness/state/tasks/T-10.md
+new file mode 100644
+index 0000000..696631a
+--- /dev/null
++++ b/harness/state/tasks/T-10.md
+@@ -0,0 +1,66 @@
++# T-10 Test-XlsFormulas 関数
++
++## 目的
++recalc.py 互換の数式検証関数 `Test-XlsFormulas` を実装する(P4 検証系の中核)。
++CLI ラッパー(T-12)と外部リンク refused(T-11)は後続タスク。本タスクは関数本体のみ。
++
++> 01-design.md §3.6:
++> - `Invoke-XlsSession -ReadOnly` で開き `CalculateFullRebuild`(`Calculation` は Automatic に一時変更)。
++> - 全シートで `SpecialCells(xlCellTypeFormulas, xlErrors)`。ヒットなし例外は握りつぶす。
++> - 出力 JSON(recalc.py 完全互換):
++>   ```
++>   { "status": "success" | "errors_found",
++>     "total_formulas": int,
++>     "total_errors": int,
++>     "error_summary": { "#REF!": { "count": int, "locations": ["Sheet1!B5", ...], "locations_truncated": int }, ... } }
++>   ```
++> - G-04: キー名を変えない。locations は 100 件で切り、locations_truncated に切った数。
++
++## 入力
++- 参照ファイル: docs/01-design.md §3.6、docs/03-guardrails.md G-04
++- 前提タスク: T-04(完了済み。Set-XlsCalculationAutomatic を共通利用 — 02-implementation-plan.md §5)、T-08(SpecialCells の流儀)
++- 前提レビュー: T-08(SpecialCells の catch は COMException + HResult 0x800A03EC に限定)
++
++## 仕様の具体化(実装判断は実装メモに記録)
++- 関数シグネチャ: `Test-XlsFormulas -Path <string>`(戻り値は PSCustomObject。JSON 文字列化は T-12 の CLI 側でも使うので -AsJson スイッチを付けるかは実装判断)。
++- ReadOnly で開いて CalculateFullRebuild する(ファイルは変更しない — 検証専用)。
++- total_formulas: 全シートの数式セル総数(SpecialCells(xlCellTypeFormulas) の Areas 集計。T-08 の Get-XlsFormulaCellKeySet 的手法を再利用してよい)。
++- エラー検出: `SpecialCells(xlCellTypeFormulas, xlErrors)`(第2引数 xlErrors=16)。エラー種別は各セルの Value2(Int32 エラーコード → $script:Xl の既存定数で "#REF!" 等へ。T-06 の変換を再利用)。
++- error_summary: エラー種別ごとに count / locations(`Sheet1!B5` 形式、$ なし) / locations_truncated。locations は 100 件で切る。
++- locations の順序: シート順→セル順(決定的であること。テストで固定)。
++- status: total_errors -eq 0 なら "success"、それ以外 "errors_found"。
++- 外部リンクの refused 判定は T-11 なので今回は実装しない(構造だけ意識)。
++- 数式ゼロのブック: total_formulas=0, status="success"。
++
++## 成果物
++- `skill/scripts/XlsAgent.psm1` の `Test-XlsFormulas` 本実装
++- 使用定数($script:Xl.xlErrors = 16 等)+ com-constants.md 追記
++- `tests/Test-XlsFormulas.Tests.ps1`
++
++## 受け入れテスト要点(02-implementation-plan.md §4)
++- 意図的に `#REF!` `#DIV/0!` `#NAME?` を含むブック(Invoke-XlsSession 内で作成、Save-XlsWorkbook 経由保存)で、種別ごとの count と locations が正しい。
++- 101 個以上のエラーで locations が 100 で切れ locations_truncated が正しい(1 セルずつ 101 個の数式を書くのではなく、Set-XlsRange か数式の一括代入で効率的に作る — G-08 に注意: Formula の一括代入は Value2 と別なので、範囲への同一数式一括代入 `$range.Formula = '=1/0'` が使える。実機確認して実装メモに記録)。
++- 数式はあるがエラーなし → status="success"、total_formulas > 0、error_summary が空。
++- 数式ゼロ → success / 0 / 0。
++- Manual のまま古い値が残ったブックでも CalculateFullRebuild 後の値で判定される(T-04 の罠 5 を利用したテスト)。
++- 異常系: ファイル不在で次の一手が分かる例外。
++
++## 完了条件(Definition of Done)
++- [ ] `Invoke-Pester tests/Test-XlsFormulas.Tests.ps1` が緑(+全体回帰緑)
++- [ ] テスト後に EXCEL.EXE が残っていない
++- [ ] guardrails 自己チェック欄に○
++- [ ] Codex レビューで blocking ゼロ
++
++## 実装メモ(Sonnet が記入)
++
++## 自己チェック
++| # | 項目 | ○/× |
++|---|---|---|
++| G-04 | recalc.py JSON 契約(キー名)を変えていない | |
++| G-05 | GetActiveObject を使っていない | |
++| G-06 | COM は Invoke-XlsSession 内のみ | |
++| G-07 | Assert-NoOrphanExcel が AfterEach にある | |
++| G-08 | Value2 代入は [object[,]] のみ | |
++| G-11 | 7 専用構文なし | |
++| G-13 | Pester テストがある | |
++| G-15 | テストは緑 | |
+diff --git a/skill/scripts/XlsAgent.psm1 b/skill/scripts/XlsAgent.psm1
+index 989825b..5ad9a24 100644
+--- a/skill/scripts/XlsAgent.psm1
++++ b/skill/scripts/XlsAgent.psm1
+@@ -2130,24 +2130,738 @@ function Get-XlsRange {
+     return , $result
+ }
+ 
++function Test-XlsIsoDateString {
++    <#
++    .SYNOPSIS
++        文字列が Get-XlsRange の日付出力形式（yyyy-MM-dd または yyyy-MM-ddTHH:mm:ss）に一致するかを
++        判定する。COM は触らない純粋関数。ConvertTo-XlsWriteCellValue の内部ヘルパー（T-09）。
++        Export しない。
++    .PARAMETER Text
++        判定対象の文字列。
++    .EXAMPLE
++        Test-XlsIsoDateString -Text '2024-01-01'
++    .NOTES
++        実装判断（実装メモに詳細）: ConvertTo-XlsIsoDateString（T-06）が生成しうる 2 つの形式
++        （日付のみ／日時）だけを対象にする。大文字小文字を区別する `-cmatch` を使う（小文字の
++        't' 区切りなど ISO 8601 の亜種は対象外。Get 側が常に大文字 'T' を出力するため往復には
++        十分）。この判定にマッチした文字列は無条件で日付とみなして ToOADate() に回す
++        （§3.5「ISO 文字列を検出したら ToOADate()」の設計どおり。日付のように見えるだけの
++        テキストセルは区別できないという既知のトレードオフ。実装メモ参照）。
++    #>
++    [CmdletBinding()]
++    param(
++        [Parameter(Mandatory = $true)]
++        [AllowEmptyString()]
++        [string]$Text
++    )
++
++    return [bool]($Text -cmatch '^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2})?$')
++}
++
++function ConvertFrom-XlsIsoDateStringToSerial {
++    <#
++    .SYNOPSIS
++        ISO 8601 日付文字列（Test-XlsIsoDateString に一致する形式）を、Range.Value2 に書き込める
++        Excel の生シリアル値に変換する。ConvertTo-XlsIsoDateString（T-06、Get-XlsRange の日付→文字列
++        変換）の逆変換。変換できない場合（実在しない日付など）は $null を返す。COM は触らない純粋関数。
++        ConvertTo-XlsWriteCellValue の内部ヘルパー（T-09）。Export しない。
++    .PARAMETER Text
++        Test-XlsIsoDateString に一致する文字列。
++    .PARAMETER Date1904
++        書き込み先ワークブックが 1904 日付体系（Workbook.Date1904 = $true）かどうか。
++    .EXAMPLE
++        ConvertFrom-XlsIsoDateStringToSerial -Text '2023-03-15'
++    .NOTES
++        ConvertTo-XlsIsoDateString の変換規則（T-06 実装メモ、実機確認済み）をそのまま逆にする:
++          - Date1904: Get は `raw + 1462` を .NET の OADate として扱う。逆に `dt.ToOADate() - 1462`
++            が書き込むべき raw 値になる。
++          - 1900 日付体系・架空の 1900-02-29（serial 60、実在しない日付のため [DateTime] で
++            表現できない）: 文字列が `1900-02-29`（＋任意の時刻部）に一致する場合だけ特別扱いし、
++            serial 60（＋時刻の端数）を直接返す。[DateTime]::ParseExact はこの日付を解釈できず
++            例外になるため、通常の解析経路より先に判定する。
++          - 1900 日付体系・serial 1〜59（1900-01-01〜1900-02-28）: Get は `raw + 1` を OADate として
++            扱う（Excel が Lotus 1-2-3 互換で 1900 年を閏年とみなすバグを継承しているため）。
++            この範囲の実在日付は OADate 2〜60（Feb 28 1900 の OADate は 60。ちょうど下限の
++            架空 60 と重ならないのは、実在日付の ParseExact が返す OADate が整数境界で
++            [2, 61) に収まり、架空日はここでは解析されず上の分岐で先に処理されるため）に写るので、
++            `dt.ToOADate()` がこの範囲に入っていれば `-1` する。
++          - それ以外（serial 61 以降・serial 0 以下）: Get は raw をそのまま OADate として使うため、
++            逆も `dt.ToOADate()` をそのまま raw として使う。
++        正規表現には一致するが実在しない日付（例 '2024-02-30'）は [DateTime]::ParseExact が
++        FormatException を投げるため、ここで捕捉して $null を返す（呼び出し元はそのまま文字列として
++        書き込む。実装判断、実装メモ参照）。架空日 `1900-02-29` の時刻部が正規表現の形（2 桁:2 桁:2 桁）
++        には一致するが実在しない時刻（例 `99:99:99`）の場合も、`[TimeSpan]::ParseExact` の例外を
++        同じように捕捉して $null にする（round 1 レビュー Q-2 指摘対応。以前はここだけ未捕捉の生例外が
++        漏れていた）。
++
++        **この関数が保証する往復の範囲（round 1 レビュー should-fix 対応で明記）**: この関数は
++        `ConvertTo-XlsIsoDateString`（T-06）の**厳密な**逆関数ではない。保証できるのは
++        「Get-XlsRange が実際に出力しうる、秒単位・正準（canonical）な OADate」についてのみ:
++          - `ConvertTo-XlsIsoDateString` は `yyyy-MM-ddTHH:mm:ss` までしか出力しない（秒未満は
++            必ず切り捨てられる）ため、サブ秒を含む `[double]` シリアル値は Get 側で情報が失われており、
++            この関数だけでは復元できない（往復の対象外）。
++          - OADate は同じ暦日時刻に対して理論上複数の実数表現を持ちうる縮退ケース（例: 負の小数部の
++            正準化）があり、そのような非正準値は Get→Set で正準化された値に写ることがある。
++        テスト（`tests/Set-XlsRange.Tests.ps1`）の「round-trips ... serials」は、この関数が
++        `ConvertTo-XlsIsoDateString` の出力（＝上記の保証範囲内の値）に対して逆変換になることだけを
++        検証しており、任意の `[double]` に対する全単射を検証するものではない。
++    #>
++    [CmdletBinding()]
++    param(
++        [Parameter(Mandatory = $true)]
++        [string]$Text,
++
++        [switch]$Date1904
++    )
++
++    if (-not $Date1904 -and $Text -cmatch '^1900-02-29(T(?<time>\d{2}:\d{2}:\d{2}))?$') {
++        $serial = 60.0
++        if ($Matches.ContainsKey('time') -and $Matches['time']) {
++            try {
++                $ts = [TimeSpan]::ParseExact($Matches['time'], 'hh\:mm\:ss', [Globalization.CultureInfo]::InvariantCulture)
++            }
++            catch {
++                # round 1 レビュー（Q-2）指摘対応: 正規表現の形（2 桁:2 桁:2 桁）には一致するが
++                # 実在しない時刻（例 '99:99:99'）。他の実在しない日付と同じく $null を返し、
++                # 呼び出し元（ConvertTo-XlsWriteCellValue）がそのまま元の文字列を書き込む。
++                return $null
++            }
++            $serial += $ts.TotalDays
++        }
++        return $serial
++    }
++
++    $format = if ($Text.Length -eq 10) { 'yyyy-MM-dd' } else { 'yyyy-MM-ddTHH:mm:ss' }
++
++    try {
++        $dt = [DateTime]::ParseExact($Text, $format, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None)
++    }
++    catch {
++        # 正規表現には一致したが実在しない日付（例 '2024-02-30'）。.NOTES 参照。
++        return $null
++    }
++
++    $oaValue = $dt.ToOADate()
++
++    if ($Date1904) {
++        return $oaValue - 1462.0
++    }
++    if ($oaValue -ge 2.0 -and $oaValue -lt 61.0) {
++        return $oaValue - 1.0
++    }
++    return $oaValue
++}
++
++function ConvertTo-XlsWriteCellValue {
++    <#
++    .SYNOPSIS
++        Set-XlsRange の入力元（-Data/-FromCsv/-FromJson のいずれか）から得た 1 セル分の値を、
++        Range.Value2 へ安全に代入できる値に正規化する。COM は触らない純粋関数。
++        ConvertTo-XlsValue2Grid の内部ヘルパー（T-09）。Export しない。
++    .PARAMETER Value
++        正規化対象の値（$null、文字列、数値、真偽値のいずれか）。
++    .PARAMETER Date1904
++        書き込み先ワークブックが 1904 日付体系かどうか（ISO 日付文字列の変換に使う）。
++    .EXAMPLE
++        ConvertTo-XlsWriteCellValue -Value '2024-01-01'
++    .NOTES
++        変換規則（01-design.md §3.5、実装判断は実装メモに詳細）:
++          - $null はそのまま $null（空セルとして書く。タスクカード指定）。
++          - 文字列で Test-XlsIsoDateString に一致するものは ConvertFrom-XlsIsoDateStringToSerial で
++            シリアル値（[double]）に変換する。変換できない（実在しない日付）場合は元の文字列のまま
++            返す。
++          - 数値型（[double]/[single]/[decimal]/整数系）は明示的に [double] へ再キャストしてから
++            返す。罠（tests/Common.ps1 の New-XlsSingleCellArray .NOTES、T-06 round 2 で実機確認済み）:
++            型指定のないパラメーター経由で受け取った [double] を関数境界・スクリプトブロック境界を
++            またいでそのまま Range.Value2 に代入すると COMException (0x800A03EC) になることがある。
++            格納前に明示的に再キャストすると再現しない。JSON 由来の整数（ConvertFrom-Json は
++            整数リテラルを [long] にする）も同じ理由でここで [double] に揃える（Excel のセルの数値は
++            常に [double] であるため、型としても自然）。
++          - それ以外（真偽値、日付でない文字列）はそのまま返す。
++    #>
++    [CmdletBinding()]
++    param(
++        [AllowNull()]
++        $Value,
++
++        [switch]$Date1904
++    )
++
++    if ($null -eq $Value) {
++        return $null
++    }
++
++    if ($Value -is [string]) {
++        if (Test-XlsIsoDateString -Text $Value) {
++            $serial = ConvertFrom-XlsIsoDateStringToSerial -Text $Value -Date1904:$Date1904
++            if ($null -ne $serial) {
++                return [double]$serial
++            }
++        }
++        return [string]$Value
++    }
++
++    if ($Value -is [bool]) {
++        return [bool]$Value
++    }
++
++    if ($Value -is [double] -or $Value -is [single] -or $Value -is [decimal] -or
++        $Value -is [int16] -or $Value -is [int32] -or $Value -is [int64] -or
++        $Value -is [uint16] -or $Value -is [uint32] -or $Value -is [uint64] -or $Value -is [byte]) {
++        return [double]$Value
++    }
++
++    return $Value
++}
++
++function ConvertTo-XlsValue2Grid {
++    <#
++    .SYNOPSIS
++        行の配列の配列（ジャグ配列。すべての行が同じ列数であること）から、ConvertTo-XlsWriteCellValue
++        で各セルを正規化した 0-based の [object[,]] を組み立てる（G-08: Range.Value2 への代入は
++        [object[,]] のみ、かつ 1 回の代入で済ませるための最終ステップ）。COM は触らない純粋関数。
++        Set-XlsRange の内部関数（T-09）。Export しない。
++    .PARAMETER Rows
++        行の配列の配列。各要素（行）は同じ要素数の配列であること。
++    .PARAMETER Date1904
++        書き込み先ワークブックが 1904 日付体系かどうか。
++    .EXAMPLE
++        ConvertTo-XlsValue2Grid -Rows @(@(1.0, 'a'), @(2.0, 'b'))
++    .NOTES
++        行ごとの列数が一致しない場合は、どの行が何列だったかが分かる次の一手メッセージで例外にする
++        （実装判断: 欠損セルを $null で埋めて黙って続けるのではなく、矩形でないデータを明示的に拒否する。
++        実装メモ参照）。
++    #>
++    [CmdletBinding()]
++    param(
++        [Parameter(Mandatory = $true)]
++        [AllowEmptyCollection()]
++        [array]$Rows,
++
++        [switch]$Date1904
++    )
++
++    $rowCount = $Rows.Count
++    $colCount = if ($rowCount -gt 0) { @($Rows[0]).Count } else { 0 }
++
++    for ($r = 0; $r -lt $rowCount; $r++) {
++        $rowLen = @($Rows[$r]).Count
++        if ($rowLen -ne $colCount) {
++            throw "Row $($r + 1) of the data has $rowLen value(s) but row 1 has $colCount; all rows must have the same number of columns to build a rectangular range. Pad missing cells with `$null explicitly."
++        }
++    }
++
++    [object[,]]$grid = [Array]::CreateInstance([object], $rowCount, $colCount)
++    for ($r = 0; $r -lt $rowCount; $r++) {
++        $rowValues = @($Rows[$r])
++        for ($c = 0; $c -lt $colCount; $c++) {
++            $grid[$r, $c] = ConvertTo-XlsWriteCellValue -Value $rowValues[$c] -Date1904:$Date1904
++        }
++    }
++
++    return , $grid
++}
++
++function ConvertFrom-XlsObjectArray2DToRows {
++    <#
++    .SYNOPSIS
++        [object[,]] 2 次元配列を、行の配列の配列（ジャグ配列）に変換する。COM は触らない純粋関数。
++        ConvertTo-XlsWriteRows の内部ヘルパー（T-09、-Data に [object[,]] が渡された場合の経路）。
++        Export しない。
++    .PARAMETER Array
++        変換対象の [object[,]]（0-based/1-based いずれの下限でも可。GetLowerBound/GetUpperBound で
++        実際の境界を見る）。
++    .EXAMPLE
++        ConvertFrom-XlsObjectArray2DToRows -Array $twoDimArray
++    #>
++    [CmdletBinding()]
++    param(
++        [Parameter(Mandatory = $true)]
++        $Array
++    )
++
++    $rows = New-Object System.Collections.ArrayList
++    $rLower = $Array.GetLowerBound(0)
++    $rUpper = $Array.GetUpperBound(0)
++    $cLower = $Array.GetLowerBound(1)
++    $cUpper = $Array.GetUpperBound(1)
++
++    for ($r = $rLower; $r -le $rUpper; $r++) {
++        $row = New-Object System.Collections.ArrayList
++        for ($c = $cLower; $c -le $cUpper; $c++) {
++            # 罠（実機確認、実装メモ参照）: `.Add($Array[$r, $c])` のように多次元配列のインデックス
++            # （カンマ区切り）をメソッド呼び出しの引数リストへ直接埋め込むと、PowerShell のパーサーが
++            # インデックスのカンマを引数区切りのカンマと誤認し、構文エラー（「配列インデックス式の後に
++            # ']' がありません」等）になる。いったんローカル変数に取り出してから `.Add()` に渡す
++            # （T-08 の `Get-XlsFormulaCellKeySet` 等、既存コードはこのパターンを直接埋め込んだ
++            # 例がなかったため今回初めて踏んだ罠。SKILL.md gotchas 候補）。
++            $cellValue = $Array[$r, $c]
++            [void]$row.Add($cellValue)
++        }
++        [void]$rows.Add($row.ToArray())
++    }
++
++    return , $rows.ToArray()
++}
++
++function ConvertFrom-XlsHeaderObjectsToRows {
++    <#
++    .SYNOPSIS
++        名前付きプロパティを持つオブジェクトの配列（PSCustomObject または IDictionary。
++        Get-XlsRange -Header の戻り値、または ConvertFrom-Json が JSON オブジェクト配列から作る形と
++        同じ形）を、1 行目がヘッダーであるジャグ配列に組み立て直す（Set-XlsRange -Header の逆操作）。
++        COM は触らない純粋関数。ConvertTo-XlsWriteRows と Import-XlsJsonRows が共有する内部ヘルパー
++        （T-09）。Export しない。
++    .PARAMETER Items
++        オブジェクトの配列（要素数 0 も許容し、その場合は空のジャグ配列を返す）。
++    .EXAMPLE
++        ConvertFrom-XlsHeaderObjectsToRows -Items $psCustomObjectArray
++    .NOTES
++        実装判断（実装メモに詳細）: 列の並び順は先頭要素（$Items[0]）のプロパティ／キーの順序で決める
++        （PSCustomObject は Get-XlsRange 側が [ordered] で作るため挿入順を保つ。ConvertFrom-Json が
++        JSON オブジェクトから作る PSCustomObject も同様にキーの出現順を保つことを実機確認済み）。
++        後続の要素に先頭要素にないキーがあっても無視し、先頭要素にあって後続要素にないキーは $null
++        として埋める（Get-XlsRange -AsJson -Header の出力は常に全行が同じキー集合を持つため、
++        通常はこの分岐は発生しない）。
++    #>
++    [CmdletBinding()]
++    param(
++        [Parameter(Mandatory = $true)]
++        [AllowEmptyCollection()]
++        [array]$Items
++    )
++
++    if ($Items.Count -eq 0) {
++        return , @()
++    }
++
++    $first = $Items[0]
++    $keys = New-Object System.Collections.ArrayList
++
++    if ($first -is [System.Collections.IDictionary]) {
++        foreach ($k in $first.Keys) {
++            [void]$keys.Add([string]$k)
++        }
++    }
++    elseif ($first -is [System.Management.Automation.PSCustomObject]) {
++        foreach ($p in $first.PSObject.Properties) {
++            [void]$keys.Add($p.Name)
++        }
++    }
++    else {
++        throw "-Header requires each element to be a named-property object (PSCustomObject or hashtable), such as the array Get-XlsRange -Header returns. Got an element of type '$($first.GetType().FullName)'."
++    }
++
++    $rows = New-Object System.Collections.ArrayList
++    [void]$rows.Add($keys.ToArray())
++
++    foreach ($item in $Items) {
++        $row = New-Object System.Collections.ArrayList
++        foreach ($k in $keys) {
++            if ($item -is [System.Collections.IDictionary]) {
++                [void]$row.Add($item[$k])
++            }
++            else {
++                [void]$row.Add($item.$k)
++            }
++        }
++        [void]$rows.Add($row.ToArray())
++    }
++
++    return , $rows.ToArray()
++}
++
++function ConvertTo-XlsWriteRows {
++    <#
++    .SYNOPSIS
++        Set-XlsRange -Data に渡された値（[object[,]]、ジャグ配列、または -Header 指定時は
++        名前付きオブジェクトの配列）を、行の配列の配列（ジャグ配列）に正規化する。COM は触らない
++        純粋関数。Set-XlsRange の内部関数（T-09）。Export しない。
++    .PARAMETER Data
++        -Data の生の値。
++    .PARAMETER Header
++        指定した場合、$Data を名前付きオブジェクトの配列として解釈する
++        （ConvertFrom-XlsHeaderObjectsToRows へ委譲）。
++    .EXAMPLE
++        ConvertTo-XlsWriteRows -Data @(@(1, 2), @(3, 4))
++    .NOTES
++        タスクカード T-09 の整理: 01-design.md §3.5 のシグネチャは `-Data <object[,]>` だが、
++        Get-XlsRange との往復を成立させるには Get-XlsRange の戻り形式（ジャグ配列、-Header 指定時は
++        PSCustomObject の配列）も受け付ける必要がある。このため Set-XlsRange 本体の `-Data` パラメーター
++        は型注釈を外し（後述）、この関数が実行時に形を判定する。「2 次元データを受け取る」という
++        §3.5 の趣旨の範囲内の実装判断として記録する（タスクカード指示どおり）。
++
++        判定順序:
++          1. `.Rank -eq 2` の配列（[object[,]]）-> ConvertFrom-XlsObjectArray2DToRows（-Header は
++             意味を持たない。2 次元配列には名前付きプロパティという概念がないため無視する。CSV の
++             -Header 無視と同じ理由で対称的な実装判断。実装メモ参照）。
++          2. それ以外（1 次元コレクション）で -Header 指定 -> ConvertFrom-XlsHeaderObjectsToRows。
++          3. それ以外（1 次元コレクション、-Header なし）-> 各要素をそのまま 1 行の値配列とみなす
++             （Get-XlsRange の既定の戻り形式と同じ、行はすべて配列であることが必須）。要素が文字列
++             （文字の並びとして IEnumerable になってしまう）や非列挙型の場合は、次の一手が分かる
++             例外にする（フラットな `@(1,2,3)` を「1 行 3 列」なのか「3 行 1 列」なのか機械的に
++             推測しない、という実装判断。実装メモ参照）。
++    #>
++    [CmdletBinding()]
++    param(
++        [AllowNull()]
++        $Data,
++
++        [switch]$Header
++    )
++
++    if ($null -eq $Data) {
++        throw '-Data must not be $null. Pass a 2D array, a jagged array of rows, or (with -Header) an array of named-property objects.'
++    }
++
++    if ($Data -is [Array] -and $Data.Rank -eq 2) {
++        return , (ConvertFrom-XlsObjectArray2DToRows -Array $Data)
++    }
++
++    $items = @($Data)
++
++    if ($Header) {
++        return , (ConvertFrom-XlsHeaderObjectsToRows -Items $items)
++    }
++
++    $rows = New-Object System.Collections.ArrayList
++    foreach ($item in $items) {
++        if ($item -is [string]) {
++            throw "-Data contains a string element ('$item') where a row (array of cell values) was expected. Wrap single rows explicitly, e.g. @(,@(1,2,3)), or pass -Header if -Data is an array of named objects."
++        }
++        if ($item -is [System.Collections.IEnumerable]) {
++            [void]$rows.Add(@($item))
++        }
++        else {
++            throw "-Data contains an element of type '$($item.GetType().FullName)' where a row (array of cell values) was expected. Each row of -Data must itself be an array, or pass -Header if -Data is an array of named objects (PSCustomObject/hashtable) like Get-XlsRange -Header returns."
++        }
++    }
++
++    return , $rows.ToArray()
++}
++
++function ConvertFrom-XlsCsvText {
++    <#
++    .SYNOPSIS
++        Export-XlsRowsToCsv（T-06）が書き出す RFC 4180 風 CSV テキスト（カンマ区切り、CRLF 改行、
++        カンマ／二重引用符／改行を含むフィールドは二重引用符で囲みその中の二重引用符は二重化）を、
++        文字列フィールドの行の配列の配列（ジャグ配列）にパースする。COM は触らない純粋関数。
++        Import-XlsCsvRows の内部ヘルパー（T-09）。Export しない。
++    .PARAMETER Text
++        パース対象の CSV テキスト全体（BOM は呼び出し元で除去済みであること）。
++    .EXAMPLE
++        ConvertFrom-XlsCsvText -Text "a,b`r`nc,d`r`n"
++    .NOTES
++        実装判断（実装メモに詳細）: 末尾に CRLF がある（Export-XlsRowsToCsv が常にそう書く）通常の
++        入力では、最後のレコードの後に空行を追加しない。ファイルが改行なしで終わっている場合
++        （手編集された CSV 等）は、残っているフィールド／行をそのまま最後のレコードとして flush する。
++        空文字列（0 行の CSV）は空のジャグ配列を返す。
++    #>
++    [CmdletBinding()]
++    param(
++        [Parameter(Mandatory = $true)]
++        [AllowEmptyString()]
++        [string]$Text
++    )
++
++    $rows = New-Object System.Collections.ArrayList
++    $row = New-Object System.Collections.ArrayList
++    $field = New-Object Text.StringBuilder
++    $inQuotes = $false
++    $hasPending = $false
++    $i = 0
++    $len = $Text.Length
++
++    while ($i -lt $len) {
++        $ch = $Text[$i]
++
++        if ($inQuotes) {
++            if ($ch -eq '"') {
++                if (($i + 1) -lt $len -and $Text[$i + 1] -eq '"') {
++                    [void]$field.Append('"')
++                    $i += 2
++                }
++                else {
++                    $inQuotes = $false
++                    $i++
++                }
++            }
++            else {
++                [void]$field.Append($ch)
++                $i++
++            }
++            continue
++        }
++
++        switch ($ch) {
++            '"' {
++                $inQuotes = $true
++                $i++
++                $hasPending = $true
++            }
++            ',' {
++                [void]$row.Add($field.ToString())
++                $field = New-Object Text.StringBuilder
++                $i++
++                $hasPending = $true
++            }
++            "`r" {
++                [void]$row.Add($field.ToString())
++                $field = New-Object Text.StringBuilder
++                [void]$rows.Add($row.ToArray())
++                $row = New-Object System.Collections.ArrayList
++                $i++
++                if ($i -lt $len -and $Text[$i] -eq "`n") { $i++ }
++                $hasPending = $false
++            }
++            "`n" {
++                [void]$row.Add($field.ToString())
++                $field = New-Object Text.StringBuilder
++                [void]$rows.Add($row.ToArray())
++                $row = New-Object System.Collections.ArrayList
++                $i++
++                $hasPending = $false
++            }
++            default {
++                [void]$field.Append($ch)
++                $i++
++                $hasPending = $true
++            }
++        }
++    }
++
++    if ($hasPending -or $field.Length -gt 0 -or $row.Count -gt 0) {
++        [void]$row.Add($field.ToString())
++        [void]$rows.Add($row.ToArray())
++    }
++
++    return , $rows.ToArray()
++}
++
++function ConvertFrom-XlsCsvFieldValue {
++    <#
++    .SYNOPSIS
++        ConvertFrom-XlsCsvText が返す 1 フィールド分の生文字列を、値へ型推論する（$null/[bool]/[double]/
++        [string]）。COM は触らない純粋関数。Import-XlsCsvRows の内部ヘルパー（T-09）。Export しない。
++    .PARAMETER Field
++        パース済みの 1 フィールド分の文字列（引用符・エスケープは ConvertFrom-XlsCsvText が
++        既に解決済み）。
++    .EXAMPLE
++        ConvertFrom-XlsCsvFieldValue -Field '1234.5'
++    .NOTES
++        実装判断（タスクカード T-09 が明示的に「pandas の read_csv 相当の型推論の要否」を実装判断に
++        委ねている。実装メモに詳細）: Get-XlsRange -AsCsv（ConvertTo-XlsCsvField、T-06）が書き出す
++        形式とちょうど対になるよう、最小限の型推論だけ行う。
++          - 空文字列 -> $null（空セル。ConvertTo-XlsCsvField が $null を '' にする変換の逆）。
++          - 大文字小文字が完全一致する 'True'/'False' -> [bool]（ConvertTo-XlsCsvField の出力と
++            正確に一致する場合のみ。'true'/'TRUE' 等は文字列のまま扱う。小文字の "true" を書く
++            テキストセルまで真偽値に化けさせないための線引き）。
++          - 不変カルチャで [double]::TryParse できる -> [double]（ConvertTo-XlsCsvField が
++            InvariantCulture の 'G15' で書くため、往復で対になる）。
++          - それ以外はそのまま文字列として返す（ISO 日付文字列の判定・変換は呼び出し元の
++            ConvertTo-XlsWriteCellValue に委ねる。ここでは行わない）。
++        既知の制約（pandas の型推論と同種）: 元は文字列セルだったが数値・True/False に見える値
++        （例えばテキストとして入力された "42"）は、CSV を経由すると数値として書き戻る。CSV は
++        セルの元の型情報を保持しないフォーマットであるため、この曖昧さは往復変換の設計上の限界
++        として許容する（実装メモ参照）。
++    #>
++    [CmdletBinding()]
++    param(
++        [Parameter(Mandatory = $true)]
++        [AllowEmptyString()]
++        [string]$Field
++    )
++
++    if ($Field -eq '') {
++        return $null
++    }
++
++    if ($Field -ceq 'True') {
++        return $true
++    }
++    if ($Field -ceq 'False') {
++        return $false
++    }
++
++    [double]$parsed = 0
++    if ([double]::TryParse($Field, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$parsed)) {
++        return $parsed
++    }
++
++    return $Field
++}
++
++function Import-XlsCsvRows {
++    <#
++    .SYNOPSIS
++        UTF-8（BOM 付き）CSV ファイルを読み、行の配列の配列（型推論済み）として返す。COM は触らない。
++        Set-XlsRange -FromCsv の内部関数（T-09）。Export しない。
++    .PARAMETER Path
++        読み込む CSV ファイルパス。
++    .EXAMPLE
++        Import-XlsCsvRows -Path 'C:\tmp\data.csv'
++    .NOTES
++        S-01: `[IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8)` は既定で BOM 検出を行う
++        （.NET の StreamReader 既定動作）ため、Export-XlsRowsToCsv（T-06）が書く BOM 付き UTF-8 を
++        正しく BOM なしのテキストとして読める。
++    #>
++    [CmdletBinding()]
++    param(
++        [Parameter(Mandatory = $true)]
++        [string]$Path
++    )
++
++    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
++        throw "CSV file not found: '$Path'. Check the path, or use -Data / -FromJson instead."
++    }
++
++    try {
++        $text = [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8)
++    }
++    catch {
++        throw "Failed to read CSV file '$Path'. Underlying error: $($_.Exception.Message)"
++    }
++
++    $rawRows = ConvertFrom-XlsCsvText -Text $text
++
++    $rows = New-Object System.Collections.ArrayList
++    foreach ($rawRow in $rawRows) {
++        $row = New-Object System.Collections.ArrayList
++        foreach ($field in $rawRow) {
++            [void]$row.Add((ConvertFrom-XlsCsvFieldValue -Field $field))
++        }
++        [void]$rows.Add($row.ToArray())
++    }
++
++    return , $rows.ToArray()
++}
++
++function Import-XlsJsonRows {
++    <#
++    .SYNOPSIS
++        Get-XlsRange -AsJson（T-06）が書き出す JSON ファイル（-Header なしはジャグ配列の JSON、
++        -Header 付きはオブジェクト配列の JSON）を読み、行の配列の配列（ジャグ配列）として返す。
++        COM は触らない。Set-XlsRange -FromJson の内部関数（T-09）。Export しない。
++    .PARAMETER Path
++        読み込む JSON ファイルパス。
++    .PARAMETER Header
++        指定した場合、JSON をオブジェクト配列として解釈する
++        （ConvertFrom-XlsHeaderObjectsToRows へ委譲）。
++    .EXAMPLE
++        Import-XlsJsonRows -Path 'C:\tmp\data.json'
++    .NOTES
++        罠（tests/Get-XlsRange.Tests.ps1 の既存コメントで確認済みの挙動を踏襲。実装メモにも記録）:
++        `ConvertFrom-Json` の呼び出し自体を `@( ... )` で包むと、JSON 配列全体がパイプラインへ
++        「展開されず 1 個のオブジェクトとして」出力される性質と衝突し、要素数によらずもう 1 段階
++        配列が外側に被さって壊れる（例: 要素数 2 のはずが 1 になり、中身が元の配列 1 個になる）。
++        一方で、`ConvertFrom-Json` の戻り値をいったん変数へ直接代入すると、要素数 1 の JSON 配列は
++        代入時に中身の要素 1 個へアンラップされてしまう（Windows PowerShell 5.1 の既知の挙動）。
++        このどちらの罠も避けるため、まず直接代入で受け（`$parsedRaw = ConvertFrom-Json ...`。
++        呼び出し自体は `@()` で包まない）、その**変数**を `@($parsedRaw)` で包み直す
++        （変数を包む場合はパイプライン出力の二重ラップは起きない）。要素数 0/1/2 以上のいずれでも
++        正しい配列になることを確認済み（実装メモ参照）。
++    #>
++    [CmdletBinding()]
++    param(
++        [Parameter(Mandatory = $true)]
++        [string]$Path,
++
++        [switch]$Header
++    )
++
++    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
++        throw "JSON file not found: '$Path'. Check the path, or use -Data / -FromCsv instead."
++    }
++
++    try {
++        $text = [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8)
++    }
++    catch {
++        throw "Failed to read JSON file '$Path'. Underlying error: $($_.Exception.Message)"
++    }
++
++    try {
++        $parsedRaw = ConvertFrom-Json -InputObject $text
++    }
++    catch {
++        throw "Failed to parse JSON file '$Path'. Check that it is valid JSON, e.g. produced by Get-XlsRange -AsJson. Underlying error: $($_.Exception.Message)"
++    }
++
++    # 罠（.NOTES 参照）: 呼び出し自体ではなく、代入済みの変数を @() で包む。
++    $parsed = @($parsedRaw)
++
++    if ($parsed.Count -eq 0) {
++        return , @()
++    }
++
++    if ($Header) {
++        return , (ConvertFrom-XlsHeaderObjectsToRows -Items $parsed)
++    }
++
++    $rows = New-Object System.Collections.ArrayList
++    foreach ($rowRaw in $parsed) {
++        [void]$rows.Add(@($rowRaw))
++    }
++
++    return , $rows.ToArray()
++}
++
+ function Set-XlsRange {
+     <#
+     .SYNOPSIS
+-        2 次元配列（または CSV/JSON）を Range.Value2 へ一括書き込みする（セル単位ループ禁止）。
++        2 次元配列（または CSV/JSON）を Range.Value2 へ一括書き込みする唯一の経路
++        （セル単位ループ禁止。01-design.md §3.5、G-08）。
+     .PARAMETER Worksheet
+-        対象の Worksheet COM オブジェクト。
++        対象の Worksheet COM オブジェクト（Invoke-XlsSession の ScriptBlock 内で得たもの。G-06）。
+     .PARAMETER Range
+-        書き込み開始範囲（左上セルのみでも可。データ寸法で自動拡張）。
++        書き込み先範囲（A1 形式）。左上セルのみ（例 'A1'）でもよく、その場合はデータの寸法に合わせて
++        自動拡張する（Range.Resize）。複数セルの範囲を明示した場合はデータの寸法と一致している必要が
++        あり、一致しなければ例外にする。
+     .PARAMETER Data
+-        書き込む [object[,]] 2 次元配列。
++        書き込むデータ。[object[,]] 2 次元配列、行の配列の配列（ジャグ配列。Get-XlsRange の既定の
++        戻り形式）、または -Header 指定時は名前付きプロパティを持つオブジェクトの配列
++        （Get-XlsRange -Header の戻り形式）のいずれかを受け付ける（型注釈を外している理由は
++        .NOTES 参照）。
+     .PARAMETER FromCsv
+-        書き込むデータの入った CSV ファイルパス。
++        書き込むデータの入った UTF-8（BOM 付き）CSV ファイルパス（Get-XlsRange -AsCsv の出力形式）。
+     .PARAMETER FromJson
+-        書き込むデータの入った JSON ファイルパス。
++        書き込むデータの入った UTF-8（BOM 付き）JSON ファイルパス（Get-XlsRange -AsJson の出力形式）。
+     .PARAMETER Header
+-        1 行目をヘッダーとして書き込む。
++        -Data / -FromJson を名前付きオブジェクトの配列（1 行目をヘッダー名として書き込む）として
++        解釈する。-FromCsv には効果がない（.NOTES 参照）。
++    .EXAMPLE
++        Set-XlsRange -Worksheet $ws -Range 'A1' -Data @(@(1, 2), @(3, 4))
++    .EXAMPLE
++        Set-XlsRange -Worksheet $ws -Range 'A1' -FromCsv 'C:\tmp\data.csv'
+     .EXAMPLE
+-        Set-XlsRange -Worksheet $ws -Range 'A1' -FromCsv 'C:\tmp\data.csv' -Header
++        Set-XlsRange -Worksheet $ws -Range 'A1' -FromJson 'C:\tmp\data.json' -Header
++    .NOTES
++        実装判断（詳細は実装メモ）:
++          - `-Data` の型注釈: 01-design.md §3.5 のシグネチャは `-Data <object[,]>` だが、
++            Get-XlsRange との往復（タスクカード T-09 の受け入れ要点の核心）を成立させるには
++            Get-XlsRange の戻り形式（ジャグ配列、-Header 時は PSCustomObject 配列）も受け付ける
++            必要がある。型注釈を外し、ConvertTo-XlsWriteRows が実行時に形を判定する（タスクカードが
++            「§3.5 の趣旨（2 次元データ）の範囲内の実装判断」として整理してよいとしている）。
++          - `-FromCsv` に `-Header` を渡しても効果がない: Get-XlsRange -AsCsv の出力バイト列は
++            -Header の有無で変わらない（CSV は元々ヘッダー行かどうかを区別しないフォーマット。
++            T-06 実装メモ参照）ため、対称性を保つには Set 側も -FromCsv では -Header を無視し、
++            CSV の全行をそのまま書き込む（先頭行を特別扱いしない）のが Get と対称な挙動になる。
++          - 日付: ISO 8601 文字列（yyyy-MM-dd / yyyy-MM-ddTHH:mm:ss）を検出したら
++            ConvertFrom-XlsIsoDateStringToSerial（ConvertTo-XlsIsoDateString の逆。T-06 で確立した
++            Date1904・1900 年 1〜2 月の架空閏日補正を逆向きに適用）で数値化する。
++          - NumberFormat は一切変更しない（タスクカード指定）。そのため、書き込み先セルが元々
++            日付書式でなければ、書き込んだ日付は Excel 上では素の数値として表示される。これは
++            仕様どおりの既知のトレードオフであり、日付の往復を検証する呼び出し元は、対象範囲に
++            あらかじめ日付書式を設定しておく必要がある（Set-XlsRange 自身がテストする「Value2 に
++            渡した生シリアル値が正しいか」は書式に依存しない。実装メモ参照）。
++          - $null は空セルとして書く（タスクカード指定。ConvertTo-XlsWriteCellValue がそのまま
++            $null を通す）。
++          - 寸法: `-Range` が単一セル（1x1）に解決された場合だけ Range.Resize でデータの寸法に
++            自動拡張する。複数セルの範囲を明示していて、かつデータの寸法と一致しない場合は
++            次の一手が分かる例外にする（異常系。タスクカードの受け入れ要点）。
++          - 書き込みは常に ConvertTo-XlsValue2Grid で組み立てた 1 個の [object[,]] を
++            `Range.Value2 = $grid` へ 1 回だけ代入する（G-08。関数内に `foreach` で
++            `Cells(r,c)` へ代入する経路は存在しない）。
+     #>
+     [CmdletBinding()]
+     param(
+@@ -2158,7 +2872,8 @@ function Set-XlsRange {
+         [string]$Range,
+ 
+         [Parameter(Mandatory = $true, ParameterSetName = 'ByData')]
+-        [object[,]]$Data,
++        [AllowNull()]
++        $Data,
+ 
+         [Parameter(Mandatory = $true, ParameterSetName = 'ByCsv')]
+         [string]$FromCsv,
+@@ -2169,7 +2884,50 @@ function Set-XlsRange {
+         [switch]$Header
+     )
+ 
+-    throw 'Set-XlsRange は未実装です（T-09 で実装予定）。'
++    switch ($PSCmdlet.ParameterSetName) {
++        'ByData' { $rawRows = ConvertTo-XlsWriteRows -Data $Data -Header:$Header }
++        'ByCsv' { $rawRows = Import-XlsCsvRows -Path $FromCsv }
++        'ByJson' { $rawRows = Import-XlsJsonRows -Path $FromJson -Header:$Header }
++    }
++
++    $rowCount = $rawRows.Count
++    if ($rowCount -eq 0) {
++        throw 'Set-XlsRange has no data to write: the resolved input has 0 rows. Check -Data/-FromCsv/-FromJson and -Header.'
++    }
++    $colCount = @($rawRows[0]).Count
++    if ($colCount -eq 0) {
++        throw 'Set-XlsRange has no data to write: the resolved input has 0 columns. Check -Data/-FromCsv/-FromJson and -Header.'
++    }
++
++    # T-06 と同じ経路で Date1904 を 1 回だけ読む（Worksheet.Parent が所属 Workbook を返す。実機確認済み）。
++    $date1904 = [bool]$Worksheet.Parent.Date1904
++
++    $grid = ConvertTo-XlsValue2Grid -Rows $rawRows -Date1904:$date1904
++
++    try {
++        $rangeObj = $Worksheet.Range($Range)
++    }
++    catch {
++        throw "Invalid range address '$Range' on worksheet '$($Worksheet.Name)'. Check the A1-style address (e.g. 'A1' or 'A1:C10'). Excel reported: $($_.Exception.Message)"
++    }
++
++    $targetRows = [int]$rangeObj.Rows.Count
++    $targetCols = [int]$rangeObj.Columns.Count
++    $dataRowCount = $grid.GetLength(0)
++    $dataColCount = $grid.GetLength(1)
++
++    if ($targetRows -eq 1 -and $targetCols -eq 1) {
++        if ($dataRowCount -gt 1 -or $dataColCount -gt 1) {
++            # 左上セルだけ指定された場合の自動拡張（01-design.md §3.5）。
++            $rangeObj = $rangeObj.Resize($dataRowCount, $dataColCount)
++        }
++    }
++    elseif ($targetRows -ne $dataRowCount -or $targetCols -ne $dataColCount) {
++        throw "Range '$Range' on worksheet '$($Worksheet.Name)' is $targetRows x $targetCols cell(s) but the data is $dataRowCount x $dataColCount. Pass a single top-left cell (e.g. 'A1') to auto-resize to the data, or make the explicit range's dimensions match the data."
++    }
++
++    # G-08: [object[,]] を Range.Value2 へ 1 回だけ代入する。セル単位のループはしない。
++    $rangeObj.Value2 = $grid
+ }
+ 
+ function Test-XlsFormulas {
+diff --git a/tests/Set-XlsRange.Tests.ps1 b/tests/Set-XlsRange.Tests.ps1
+new file mode 100644
+index 0000000..40b5b46
+--- /dev/null
++++ b/tests/Set-XlsRange.Tests.ps1
+@@ -0,0 +1,807 @@
++﻿#Requires -Version 5.1
++
++<#
++tests/Set-XlsRange.Tests.ps1
++
++T-09: Set-XlsRange（一括書き込みの唯一の経路。01-design.md §3.5）と、内部関数
++Test-XlsIsoDateString / ConvertFrom-XlsIsoDateStringToSerial / ConvertTo-XlsWriteCellValue /
++ConvertTo-XlsValue2Grid / ConvertFrom-XlsObjectArray2DToRows / ConvertFrom-XlsHeaderObjectsToRows /
++ConvertTo-XlsWriteRows / ConvertFrom-XlsCsvText / ConvertFrom-XlsCsvFieldValue / Import-XlsCsvRows /
++Import-XlsJsonRows の受け入れテスト。
++harness/state/tasks/T-09.md の受け入れテスト要点:
++  - 往復テスト: Set → Get で 2 次元配列・CSV・JSON が同値。
++  - 日付列が ISO 文字列で往復（Date1904 ブックも）。
++  - 空セルが $null で往復。
++  - 左上セル指定の自動拡張。
++  - 異常系: 不正な範囲、寸法不一致（明示範囲とデータ寸法が矛盾）の扱い。
++
++G-06: COM はすべて Invoke-XlsSession の ScriptBlock 内、または Invoke-XlsSession 自身の中
++（Set-XlsRange/Get-XlsRange 自体を含む）でのみ触る。フィクスチャ作成は Common.ps1 の
++New-XlsObjectArray2D / New-XlsSingleCellArray で作った [object[,]]（G-08）を ScriptBlock 内で
++Range.Value2 に代入する形で行う。
++
++純粋関数は COM を一切使わないため、他の *.Tests.ps1 と同じ `& $script:ModuleRef { ... }` パターンで
++モジュールスコープに入って直接テストする。
++#>
++
++$here = Split-Path -Parent $MyInvocation.MyCommand.Path
++. (Join-Path $here 'Common.ps1')
++
++$moduleName = 'XlsAgent'
++$modulePath = Join-Path $here '..\skill\scripts\XlsAgent.psm1'
++
++function New-XlsAgentTempFilePath {
++    param([Parameter(Mandatory = $true)][string]$Extension)
++
++    $dir = Join-Path $env:TEMP 'xlsagent-tests'
++    if (-not (Test-Path -LiteralPath $dir)) {
++        New-Item -ItemType Directory -Path $dir -Force | Out-Null
++    }
++    Join-Path $dir ("{0}.{1}" -f ([guid]::NewGuid().ToString()), $Extension)
++}
++
++Describe 'Set-XlsRange (T-09)' {
++
++    BeforeEach {
++        Import-Module $modulePath -Force
++        $script:ModuleRef = Get-Module $moduleName
++        $script:BaselinePids = Get-ExcelPids
++    }
++
++    AfterEach {
++        Assert-NoOrphanExcel -Baseline $script:BaselinePids
++        Remove-Module $moduleName -ErrorAction SilentlyContinue
++    }
++
++    AfterAll {
++        Remove-Module $moduleName -ErrorAction SilentlyContinue
++    }
++
++    Context 'Test-XlsIsoDateString (pure function, no COM)' {
++
++        It 'matches date-only and date-time ISO strings' {
++            (& $script:ModuleRef { Test-XlsIsoDateString -Text '2024-01-01' }) | Should Be $true
++            (& $script:ModuleRef { Test-XlsIsoDateString -Text '2024-01-01T12:34:56' }) | Should Be $true
++        }
++
++        It 'does not match non-ISO-shaped text' {
++            $cases = @('2024-1-1', 'hello', '45000', '', '2024/01/01', '2024-01-01T12:34')
++            foreach ($c in $cases) {
++                (& $script:ModuleRef { param($t) Test-XlsIsoDateString -Text $t } $c) | Should Be $false
++            }
++        }
++    }
++
++    Context 'ConvertFrom-XlsIsoDateStringToSerial (pure function, no COM)' {
++
++        # round-trip boundary の期待値は tests/Get-XlsRange.Tests.ps1 の
++        # '1900/1904 date system boundaries' と対になる（ConvertTo-XlsIsoDateString の逆変換）。
++        It 'converts 1900-01-01 back to serial 1 (the +1 correction boundary)' {
++            (& $script:ModuleRef { ConvertFrom-XlsIsoDateStringToSerial -Text '1900-01-01' }) | Should Be 1.0
++        }
++
++        It 'converts 1900-02-28 back to serial 59' {
++            (& $script:ModuleRef { ConvertFrom-XlsIsoDateStringToSerial -Text '1900-02-28' }) | Should Be 59.0
++        }
++
++        It 'converts the fictitious 1900-02-29 back to serial 60' {
++            (& $script:ModuleRef { ConvertFrom-XlsIsoDateStringToSerial -Text '1900-02-29' }) | Should Be 60.0
++        }
++
++        It 'converts 1900-02-29T12:00:00 back to serial 60.5' {
++            (& $script:ModuleRef { ConvertFrom-XlsIsoDateStringToSerial -Text '1900-02-29T12:00:00' }) | Should Be 60.5
++        }
++
++        It 'converts 1900-03-01 back to serial 61 (no correction needed)' {
++            (& $script:ModuleRef { ConvertFrom-XlsIsoDateStringToSerial -Text '1900-03-01' }) | Should Be 61.0
++        }
++
++        It 'converts a Date1904-system ISO string back using the -1462 offset' {
++            (& $script:ModuleRef { ConvertFrom-XlsIsoDateStringToSerial -Text '1904-01-01' -Date1904 }) | Should Be 0.0
++        }
++
++        It 'does not apply the 1900 fictitious-leap-day correction when Date1904 is set' {
++            (& $script:ModuleRef { ConvertFrom-XlsIsoDateStringToSerial -Text '1904-02-29' -Date1904 }) | Should Be 59.0
++        }
++
++        It 'returns $null for a string that matches the ISO shape but is not a real date' {
++            (& $script:ModuleRef { ConvertFrom-XlsIsoDateStringToSerial -Text '2024-02-30' }) | Should Be $null
++        }
++
++        # round 1 レビュー should-fix 対応: 架空日 1900-02-29 の時刻部が「2 桁:2 桁:2 桁」という
++        # 正規表現の形には一致するが実在しない時刻（例 99:99:99）の場合、以前は
++        # [TimeSpan]::ParseExact の未捕捉の生例外が漏れていた。他の実在しない日付（2024-02-30 等）と
++        # 同じく $null を返す（呼び出し元がそのまま元の文字列を書き込む）。
++        It 'returns $null (does not throw) for the fictitious 1900-02-29 with an invalid time-of-day' {
++            (& $script:ModuleRef { ConvertFrom-XlsIsoDateStringToSerial -Text '1900-02-29T99:99:99' }) | Should Be $null
++        }
++
++        # round 1 レビュー should-fix 対応: この関数は ConvertTo-XlsIsoDateString の厳密な逆関数では
++        # ない。保証できるのは「Get-XlsRange が実際に出力しうる、秒単位・正準（canonical）な OADate」
++        # についてのみ（関数 .NOTES 参照）。以下はその保証範囲内の代表値（Get 側が出力する形式に
++        # サブ秒が含まれず、かつ正準な OADate であることが分かっている値）で、Get→Set が逆変換になる
++        # ことを確認する回帰であり、任意の [double] に対する全単射を主張するものではない
++        # （テスト名を「arbitrary」から変更）。
++        It 'round-trips second-granularity canonical serials representable by Get through ConvertTo-XlsIsoDateString and back (1900 system)' {
++            $serials = @(1.0, 2.0, 30.0, 59.0, 61.0, 100.0, 45000.0, 45000.5)
++            foreach ($s in $serials) {
++                $iso = & $script:ModuleRef { param($v) ConvertTo-XlsIsoDateString -OleAutomationValue $v } $s
++                $back = & $script:ModuleRef { param($t) ConvertFrom-XlsIsoDateStringToSerial -Text $t } $iso
++                $back | Should Be $s
++            }
++        }
++
++        It 'round-trips second-granularity canonical serials representable by Get through ConvertTo-XlsIsoDateString and back (Date1904 system)' {
++            $serials = @(0.0, 1.0, 59.0, 100.0, 45000.0)
++            foreach ($s in $serials) {
++                $iso = & $script:ModuleRef { param($v) ConvertTo-XlsIsoDateString -OleAutomationValue $v -Date1904 } $s
++                $back = & $script:ModuleRef { param($t) ConvertFrom-XlsIsoDateStringToSerial -Text $t -Date1904 } $iso
++                $back | Should Be $s
++            }
++        }
++    }
++
++    Context 'ConvertTo-XlsWriteCellValue (pure function, no COM)' {
++
++        It 'passes $null through unchanged' {
++            (& $script:ModuleRef { ConvertTo-XlsWriteCellValue -Value $null }) | Should Be $null
++        }
++
++        It 'converts an ISO date string to its numeric serial' {
++            (& $script:ModuleRef { ConvertTo-XlsWriteCellValue -Value '1900-01-01' }) | Should Be 1.0
++        }
++
++        # round 1 レビュー should-fix 対応の回帰: 架空日の不正な時刻は例外にせず、そのまま元の文字列を
++        # 返す（ConvertFrom-XlsIsoDateStringToSerial が $null を返す経路をここでも確認する）。
++        It 'does not throw and leaves the original text unchanged for the fictitious 1900-02-29 with an invalid time-of-day' {
++            $result = & $script:ModuleRef { ConvertTo-XlsWriteCellValue -Value '1900-02-29T99:99:99' }
++            $result | Should Be '1900-02-29T99:99:99'
++        }
++
++        It 'leaves a non-ISO string unchanged' {
++            (& $script:ModuleRef { ConvertTo-XlsWriteCellValue -Value 'hello world' }) | Should Be 'hello world'
++        }
++
++        It 'leaves booleans unchanged' {
++            (& $script:ModuleRef { ConvertTo-XlsWriteCellValue -Value $true }) | Should Be $true
++            (& $script:ModuleRef { ConvertTo-XlsWriteCellValue -Value $false }) | Should Be $false
++        }
++
++        It 'recasts integer and double values to [double]' {
++            $r1 = & $script:ModuleRef { ConvertTo-XlsWriteCellValue -Value ([int]42) }
++            $r1 | Should Be 42.0
++            ($r1 -is [double]) | Should Be $true
++
++            $r2 = & $script:ModuleRef { ConvertTo-XlsWriteCellValue -Value ([double]3.5) }
++            $r2 | Should Be 3.5
++            ($r2 -is [double]) | Should Be $true
++        }
++    }
++
++    Context 'ConvertTo-XlsValue2Grid (pure function, no COM)' {
++
++        It 'builds an [object[,]] with the correct dimensions and converted values' {
++            $rows = @(@(1, 'a', $null), @('1900-01-01', $true, 2.5))
++            $grid = & $script:ModuleRef { param($r) ConvertTo-XlsValue2Grid -Rows $r } $rows
++
++            $grid.GetLength(0) | Should Be 2
++            $grid.GetLength(1) | Should Be 3
++            $grid[0, 0] | Should Be 1.0
++            $grid[0, 1] | Should Be 'a'
++            $grid[0, 2] | Should Be $null
++            $grid[1, 0] | Should Be 1.0
++            $grid[1, 1] | Should Be $true
++            $grid[1, 2] | Should Be 2.5
++        }
++
++        It 'throws a next-step error when row lengths are inconsistent' {
++            $rows = @(@(1, 2, 3), @(4, 5))
++            $errorSeen = $null
++            try {
++                & $script:ModuleRef { param($r) ConvertTo-XlsValue2Grid -Rows $r } $rows
++            }
++            catch {
++                $errorSeen = $_
++            }
++            $errorSeen | Should Not Be $null
++            $errorSeen.Exception.Message | Should Match 'Row 2'
++        }
++    }
++
++    Context 'ConvertFrom-XlsObjectArray2DToRows (pure function, no COM)' {
++
++        It 'converts a 2D array into a jagged array of rows' {
++            $arr = New-XlsObjectArray2D -Rows @(@(1.0, 2.0), @(3.0, 4.0))
++            $rows = & $script:ModuleRef { param($a) ConvertFrom-XlsObjectArray2DToRows -Array $a } $arr
++
++            $rows.Count | Should Be 2
++            $rows[0][0] | Should Be 1.0
++            $rows[0][1] | Should Be 2.0
++            $rows[1][0] | Should Be 3.0
++            $rows[1][1] | Should Be 4.0
++        }
++    }
++
++    Context 'ConvertFrom-XlsHeaderObjectsToRows (pure function, no COM)' {
++
++        It 'rebuilds a header row and data rows from an array of PSCustomObjects, preserving key order' {
++            $objs = @(
++                [PSCustomObject][ordered]@{ Name = 'Alice'; Age = 30.0 },
++                [PSCustomObject][ordered]@{ Name = 'Bob'; Age = 41.0 }
++            )
++            $rows = & $script:ModuleRef { param($i) ConvertFrom-XlsHeaderObjectsToRows -Items $i } $objs
++
++            $rows.Count | Should Be 3
++            $rows[0][0] | Should Be 'Name'
++            $rows[0][1] | Should Be 'Age'
++            $rows[1][0] | Should Be 'Alice'
++            $rows[1][1] | Should Be 30.0
++            $rows[2][0] | Should Be 'Bob'
++        }
++
++        It 'accepts an array of ordered hashtables' {
++            $objs = @([ordered]@{ X = 1.0; Y = 2.0 })
++            $rows = & $script:ModuleRef { param($i) ConvertFrom-XlsHeaderObjectsToRows -Items $i } $objs
++
++            $rows.Count | Should Be 2
++            $rows[0][0] | Should Be 'X'
++            $rows[1][0] | Should Be 1.0
++        }
++
++        It 'returns an empty jagged array for an empty item collection' {
++            $rows = & $script:ModuleRef { ConvertFrom-XlsHeaderObjectsToRows -Items @() }
++            , $rows | Should Not Be $null
++            $rows.Count | Should Be 0
++        }
++
++        It 'throws a next-step error when the first element has no named properties' {
++            $errorSeen = $null
++            try {
++                & $script:ModuleRef { ConvertFrom-XlsHeaderObjectsToRows -Items @(1, 2, 3) }
++            }
++            catch {
++                $errorSeen = $_
++            }
++            $errorSeen | Should Not Be $null
++            $errorSeen.Exception.Message | Should Match '-Header'
++        }
++    }
++
++    Context 'ConvertTo-XlsWriteRows (pure function, no COM)' {
++
++        It 'dispatches a 2D array to ConvertFrom-XlsObjectArray2DToRows' {
++            # 罠: `@(@(1.0, 2.0))` は内側の配列をそのまま展開して 2 要素の配列に「平坦化」されて
++            # しまう（tests/Get-XlsRange.Tests.ps1 の `@(, @(...))` パターンと同じ理由）。単一行の
++            # ジャグ配列を作るには `,` で明示的に 1 段階包む。
++            $arr = New-XlsObjectArray2D -Rows @(, @(1.0, 2.0))
++            $rows = & $script:ModuleRef { param($d) ConvertTo-XlsWriteRows -Data $d } $arr
++            $rows.Count | Should Be 1
++            $rows[0][1] | Should Be 2.0
++        }
++
++        It 'passes a jagged array of rows through unchanged when -Header is not set' {
++            $data = @(@(1, 2), @(3, 4))
++            $rows = & $script:ModuleRef { param($d) ConvertTo-XlsWriteRows -Data $d } $data
++            $rows.Count | Should Be 2
++            $rows[1][0] | Should Be 3
++        }
++
++        It 'dispatches to header reconstruction when -Header is set' {
++            $data = @([PSCustomObject][ordered]@{ A = 1.0; B = 2.0 })
++            $rows = & $script:ModuleRef { param($d) ConvertTo-XlsWriteRows -Data $d -Header } $data
++            $rows.Count | Should Be 2
++            $rows[0][0] | Should Be 'A'
++        }
++
++        It 'throws when -Data is $null' {
++            $errorSeen = $null
++            try {
++                & $script:ModuleRef { ConvertTo-XlsWriteRows -Data $null }
++            }
++            catch {
++                $errorSeen = $_
++            }
++            $errorSeen | Should Not Be $null
++        }
++
++        It 'throws a next-step error when a row element is a bare string' {
++            $errorSeen = $null
++            try {
++                & $script:ModuleRef { ConvertTo-XlsWriteRows -Data @('not-a-row') }
++            }
++            catch {
++                $errorSeen = $_
++            }
++            $errorSeen | Should Not Be $null
++            $errorSeen.Exception.Message | Should Match '-Header'
++        }
++    }
++
++    Context 'ConvertFrom-XlsCsvText (pure function, no COM)' {
++
++        It 'parses simple comma-separated rows terminated by CRLF' {
++            $rows = & $script:ModuleRef { ConvertFrom-XlsCsvText -Text "a,b`r`nc,d`r`n" }
++            $rows.Count | Should Be 2
++            $rows[0][0] | Should Be 'a'
++            $rows[0][1] | Should Be 'b'
++            $rows[1][1] | Should Be 'd'
++        }
++
++        It 'flushes a trailing row that has no terminating newline' {
++            $rows = & $script:ModuleRef { ConvertFrom-XlsCsvText -Text 'a,b' }
++            $rows.Count | Should Be 1
++            $rows[0][1] | Should Be 'b'
++        }
++
++        It 'returns an empty jagged array for empty text' {
++            $rows = & $script:ModuleRef { ConvertFrom-XlsCsvText -Text '' }
++            , $rows | Should Not Be $null
++            $rows.Count | Should Be 0
++        }
++
++        It 'round-trips a value containing a comma, a double quote, and a CRLF newline through ConvertTo-XlsCsvField' {
++            # Get-XlsRange.Tests.ps1 の ConvertTo-XlsCsvField テストと同じ値。書き出し側の
++            # エスケープ規則をそのまま読み戻せることを確認する。
++            $tricky = "a,b`r`n`"c"
++            $escaped = & $script:ModuleRef { param($v) ConvertTo-XlsCsvField -Value $v } $tricky
++            $csvText = "plain,$escaped`r`n"
++
++            $rows = & $script:ModuleRef { param($t) ConvertFrom-XlsCsvText -Text $t } $csvText
++            $rows.Count | Should Be 1
++            $rows[0][0] | Should Be 'plain'
++            $rows[0][1] | Should Be $tricky
++        }
++    }
++
++    Context 'ConvertFrom-XlsCsvFieldValue (pure function, no COM)' {
++
++        It 'converts an empty field to $null' {
++            (& $script:ModuleRef { ConvertFrom-XlsCsvFieldValue -Field '' }) | Should Be $null
++        }
++
++        It 'converts exact True/False to booleans but leaves other casings as text' {
++            (& $script:ModuleRef { ConvertFrom-XlsCsvFieldValue -Field 'True' }) | Should Be $true
++            (& $script:ModuleRef { ConvertFrom-XlsCsvFieldValue -Field 'False' }) | Should Be $false
++            (& $script:ModuleRef { ConvertFrom-XlsCsvFieldValue -Field 'true' }) | Should Be 'true'
++        }
++
++        It 'converts an invariant-culture-parseable number to a double' {
++            $result = & $script:ModuleRef { ConvertFrom-XlsCsvFieldValue -Field '1234.5' }
++            $result | Should Be 1234.5
++            ($result -is [double]) | Should Be $true
++        }
++
++        It 'leaves an ISO date string as text (date conversion happens later)' {
++            (& $script:ModuleRef { ConvertFrom-XlsCsvFieldValue -Field '2024-01-01' }) | Should Be '2024-01-01'
++        }
++
++        It 'leaves ordinary text unchanged' {
++            (& $script:ModuleRef { ConvertFrom-XlsCsvFieldValue -Field 'hello' }) | Should Be 'hello'
++        }
++    }
++
++    Context 'Import-XlsCsvRows / Import-XlsJsonRows error handling (no COM)' {
++
++        It 'throws a next-step error when the CSV file does not exist' {
++            $missing = Join-Path $env:TEMP ("xlsagent-tests\{0}.csv" -f [guid]::NewGuid())
++            $errorSeen = $null
++            try {
++                & $script:ModuleRef { param($p) Import-XlsCsvRows -Path $p } $missing
++            }
++            catch {
++                $errorSeen = $_
++            }
++            $errorSeen | Should Not Be $null
++            $errorSeen.Exception.Message | Should Match 'CSV file not found'
++        }
++
++        It 'throws a next-step error when the JSON file does not exist' {
++            $missing = Join-Path $env:TEMP ("xlsagent-tests\{0}.json" -f [guid]::NewGuid())
++            $errorSeen = $null
++            try {
++                & $script:ModuleRef { param($p) Import-XlsJsonRows -Path $p } $missing
++            }
++            catch {
++                $errorSeen = $_
++            }
++            $errorSeen | Should Not Be $null
++            $errorSeen.Exception.Message | Should Match 'JSON file not found'
++        }
++
++        It 'throws a next-step error when the JSON file is not valid JSON' {
++            $badPath = New-XlsAgentTempFilePath -Extension 'json'
++            [IO.File]::WriteAllText($badPath, 'not valid json {{{', [Text.Encoding]::UTF8)
++            $errorSeen = $null
++            try {
++                & $script:ModuleRef { param($p) Import-XlsJsonRows -Path $p } $badPath
++            }
++            catch {
++                $errorSeen = $_
++            }
++            $errorSeen | Should Not Be $null
++            $errorSeen.Exception.Message | Should Match 'parse JSON'
++        }
++    }
++
++    Context 'Set-XlsRange integration (real Excel via Invoke-XlsSession)' {
++
++        It 'writes a 2D [object[,]] array into an explicit matching range and round-trips through Get-XlsRange' {
++            $path = New-TempXlsxPath
++
++            $result = Invoke-XlsSession -Path $path -ScriptBlock {
++                param($app, $wb)
++                $ws = $wb.Worksheets.Item(1)
++                $data = New-XlsObjectArray2D -Rows @(
++                    @(1.0, 'hello', $true),
++                    @(2.0, $null, $false)
++                )
++                Set-XlsRange -Worksheet $ws -Range 'A1:C2' -Data $data
++                Get-XlsRange -Worksheet $ws -Range 'A1:C2'
++            }
++
++            $result.Count | Should Be 2
++            $result[0][0] | Should Be 1.0
++            $result[0][1] | Should Be 'hello'
++            $result[0][2] | Should Be $true
++            $result[1][0] | Should Be 2.0
++            $result[1][1] | Should Be $null
++            $result[1][2] | Should Be $false
++        }
++
++        It 'writes a jagged array (Get-XlsRange''s own return shape) and round-trips' {
++            $path = New-TempXlsxPath
++
++            $result = Invoke-XlsSession -Path $path -ScriptBlock {
++                param($app, $wb)
++                $ws = $wb.Worksheets.Item(1)
++                $ws.Range('A1:B2').Value2 = (New-XlsObjectArray2D -Rows @(
++                    @(10.0, 'x'),
++                    @(20.0, 'y')
++                ))
++                $src = Get-XlsRange -Worksheet $ws -Range 'A1:B2'
++
++                Set-XlsRange -Worksheet $ws -Range 'D1:E2' -Data $src
++                Get-XlsRange -Worksheet $ws -Range 'D1:E2'
++            }
++
++            $result[0][0] | Should Be 10.0
++            $result[0][1] | Should Be 'x'
++            $result[1][0] | Should Be 20.0
++            $result[1][1] | Should Be 'y'
++        }
++
++        It 'writes a PSCustomObject array (Get-XlsRange -Header output) with -Header and round-trips' {
++            $path = New-TempXlsxPath
++
++            $result = Invoke-XlsSession -Path $path -ScriptBlock {
++                param($app, $wb)
++                $ws = $wb.Worksheets.Item(1)
++                $ws.Range('A1:B3').Value2 = (New-XlsObjectArray2D -Rows @(
++                    @('Name', 'Score'),
++                    @('Alice', 10.0),
++                    @('Bob', 20.0)
++                ))
++                $srcObjs = Get-XlsRange -Worksheet $ws -Range 'A1:B3' -Header
++
++                Set-XlsRange -Worksheet $ws -Range 'D1:E3' -Data $srcObjs -Header
++                Get-XlsRange -Worksheet $ws -Range 'D1:E3' -Header
++            }
++
++            $result.Count | Should Be 2
++            $result[0].Name | Should Be 'Alice'
++            $result[0].Score | Should Be 10.0
++            $result[1].Name | Should Be 'Bob'
++        }
++
++        It 'auto-resizes from a single top-left cell to the data dimensions' {
++            $path = New-TempXlsxPath
++
++            $result = Invoke-XlsSession -Path $path -ScriptBlock {
++                param($app, $wb)
++                $ws = $wb.Worksheets.Item(1)
++                $data = @(@(1.0, 2.0), @(3.0, 4.0), @(5.0, 6.0))
++
++                Set-XlsRange -Worksheet $ws -Range 'B2' -Data $data
++                Get-XlsRange -Worksheet $ws -Range 'B2:C4'
++            }
++
++            $result.Count | Should Be 3
++            $result[0][0] | Should Be 1.0
++            $result[0][1] | Should Be 2.0
++            $result[2][0] | Should Be 5.0
++            $result[2][1] | Should Be 6.0
++        }
++
++        It 'writes and round-trips a single-cell auto-resized write (1x1 data into a single top-left cell)' {
++            $path = New-TempXlsxPath
++
++            $result = Invoke-XlsSession -Path $path -ScriptBlock {
++                param($app, $wb)
++                $ws = $wb.Worksheets.Item(1)
++                Set-XlsRange -Worksheet $ws -Range 'C3' -Data @(, @('solo'))
++                Get-XlsRange -Worksheet $ws -Range 'C3'
++            }
++
++            $result[0][0] | Should Be 'solo'
++        }
++
++        It 'writes $null as empty cells and round-trips through Get-XlsRange' {
++            $path = New-TempXlsxPath
++
++            $result = Invoke-XlsSession -Path $path -ScriptBlock {
++                param($app, $wb)
++                $ws = $wb.Worksheets.Item(1)
++                Set-XlsRange -Worksheet $ws -Range 'A1:B2' -Data @(@(1.0, $null), @($null, 4.0))
++                Get-XlsRange -Worksheet $ws -Range 'A1:B2'
++            }
++
++            $result[0][0] | Should Be 1.0
++            $result[0][1] | Should Be $null
++            $result[1][0] | Should Be $null
++            $result[1][1] | Should Be 4.0
++        }
++
++        It 'writes the correct raw Value2 serial for ISO date strings at the 1900/1904 boundaries (pre-formatted target cell)' {
++            $path = New-TempXlsxPath
++
++            $rawValues = Invoke-XlsSession -Path $path -ScriptBlock {
++                param($app, $wb)
++                $ws = $wb.Worksheets.Item(1)
++
++                # NumberFormat は Set-XlsRange が触らない値のみの経路なので、往復検証のために
++                # あらかじめ日付書式を設定しておく（タスクカード・実装メモの既知のトレードオフ）。
++                $ws.Range('A1:A5').NumberFormat = 'yyyy-mm-dd hh:mm:ss'
++                Set-XlsRange -Worksheet $ws -Range 'A1' -Data @(
++                    @('1900-01-01'),
++                    @('1900-02-28'),
++                    @('1900-02-29'),
++                    @('1900-02-29T12:00:00'),
++                    @('1900-03-01')
++                )
++
++                @(
++                    [double]$ws.Range('A1').Value2,
++                    [double]$ws.Range('A2').Value2,
++                    [double]$ws.Range('A3').Value2,
++                    [double]$ws.Range('A4').Value2,
++                    [double]$ws.Range('A5').Value2
++                )
++            }
++
++            $rawValues[0] | Should Be 1.0
++            $rawValues[1] | Should Be 59.0
++            $rawValues[2] | Should Be 60.0
++            $rawValues[3] | Should Be 60.5
++            $rawValues[4] | Should Be 61.0
++        }
++
++        It 'writes the correct raw Value2 serial for ISO date strings in a Date1904 workbook' {
++            $path = New-TempXlsxPath
++
++            $rawValue = Invoke-XlsSession -Path $path -ScriptBlock {
++                param($app, $wb)
++                $wb.Date1904 = $true
++                $ws = $wb.Worksheets.Item(1)
++                $ws.Range('A1').NumberFormat = 'yyyy-mm-dd'
++
++                Set-XlsRange -Worksheet $ws -Range 'A1' -Data @(, @('1904-01-01'))
++
++                [double]$ws.Range('A1').Value2
++            }
++
++            $rawValue | Should Be 0.0
++        }
++
++        # round 1 レビュー should-fix 対応: 上のテストは生の Value2 だけを確認しており、タスクカードが
++        # 求める「Date1904 ブックでの Set-XlsRange -> Get-XlsRange の往復」（公開関数経由）を検証して
++        # いなかった。日付のみ・架空閏日・時刻付き日時の 3 パターンで公開関数経由の往復を確認する
++        # （レビュー指摘のスニペットに準拠）。
++        It 'round-trips date-only, fictitious-leap-day, and date-time ISO strings through the public Set-XlsRange -> Get-XlsRange path in a Date1904 workbook' {
++            $path = New-TempXlsxPath
++
++            $actual = Invoke-XlsSession -Path $path -ScriptBlock {
++                param($app, $wb)
++                $wb.Date1904 = $true
++                $ws = $wb.Worksheets.Item(1)
++                $ws.Range('A1:A3').NumberFormat = 'yyyy-mm-dd hh:mm:ss'
++                $expected = @('1904-01-01', '1904-02-29', '2024-01-02T12:34:56')
++
++                Set-XlsRange -Worksheet $ws -Range 'A1' -Data @(
++                    @($expected[0]),
++                    @($expected[1]),
++                    @($expected[2])
++                )
++
++                Get-XlsRange -Worksheet $ws -Range 'A1:A3'
++            }
++
++            $actual[0][0] | Should Be '1904-01-01'
++            $actual[1][0] | Should Be '1904-02-29'
++            $actual[2][0] | Should Be '2024-01-02T12:34:56'
++        }
++
++        It 'round-trips an ISO date column through Get-XlsRange when the target cell is pre-formatted as a date' {
++            $path = New-TempXlsxPath
++
++            $iso = Invoke-XlsSession -Path $path -ScriptBlock {
++                param($app, $wb)
++                $ws = $wb.Worksheets.Item(1)
++                $ws.Range('A1').NumberFormat = 'yyyy-mm-dd'
++                Set-XlsRange -Worksheet $ws -Range 'A1' -Data @(, @('2023-06-15'))
++                Get-XlsRange -Worksheet $ws -Range 'A1'
++            }
++
++            $iso[0][0] | Should Be '2023-06-15'
++        }
++
++        It 'does not modify the NumberFormat of the target range' {
++            $path = New-TempXlsxPath
++
++            $formats = Invoke-XlsSession -Path $path -ScriptBlock {
++                param($app, $wb)
++                $ws = $wb.Worksheets.Item(1)
++                $ws.Range('A1').NumberFormat = '0.00%'
++                $before = [string]$ws.Range('A1').NumberFormat
++
++                Set-XlsRange -Worksheet $ws -Range 'A1' -Data @(, @(5.0))
++
++                $after = [string]$ws.Range('A1').NumberFormat
++                @($before, $after)
++            }
++
++            $formats[0] | Should Be '0.00%'
++            $formats[1] | Should Be '0.00%'
++        }
++
++        It 'round-trips numbers, comma-containing text, booleans, null, and a pre-formatted date column through -FromCsv' {
++            $path = New-TempXlsxPath
++            $csvPath = New-XlsAgentTempFilePath -Extension 'csv'
++
++            $result = Invoke-XlsSession -Path $path -ScriptBlock {
++                param($app, $wb)
++                $ws = $wb.Worksheets.Item(1)
++
++                $ws.Range('A1:D3').Value2 = (New-XlsObjectArray2D -Rows @(
++                    @('Tokyo', 10.5, $true, 45000.0),
++                    @('Osaka,Japan', 20.0, $false, 45010.0),
++                    @($null, 0.0, $true, 45020.5)
++                ))
++                $ws.Range('D1:D3').NumberFormat = 'yyyy-mm-dd hh:mm:ss'
++
++                $expected = Get-XlsRange -Worksheet $ws -Range 'A1:D3'
++                Get-XlsRange -Worksheet $ws -Range 'A1:D3' -AsCsv $csvPath | Out-Null
++
++                # 書き込み先はあらかじめ日付列だけ同じ書式にしておく（NumberFormat は Set-XlsRange が
++                # 触らないため。実装メモ参照）。
++                $ws.Range('I1:I3').NumberFormat = 'yyyy-mm-dd hh:mm:ss'
++                Set-XlsRange -Worksheet $ws -Range 'F1' -FromCsv $csvPath
++
++                $actual = Get-XlsRange -Worksheet $ws -Range 'F1:I3'
++                @($expected, $actual)
++            }
++
++            $expected = $result[0]
++            $actual = $result[1]
++
++            for ($r = 0; $r -lt 3; $r++) {
++                for ($c = 0; $c -lt 4; $c++) {
++                    $actual[$r][$c] | Should Be $expected[$r][$c]
++                }
++            }
++
++            Test-Path -LiteralPath $csvPath | Should Be $true
++        }
++
++        It 'round-trips a jagged-array JSON export (no -Header) through -FromJson' {
++            $path = New-TempXlsxPath
++            $jsonPath = New-XlsAgentTempFilePath -Extension 'json'
++
++            $result = Invoke-XlsSession -Path $path -ScriptBlock {
++                param($app, $wb)
++                $ws = $wb.Worksheets.Item(1)
++
++                $ws.Range('A1:B2').Value2 = (New-XlsObjectArray2D -Rows @(
++                    @(1.0, 'first'),
++                    @($null, 'second')
++                ))
++                $expected = Get-XlsRange -Worksheet $ws -Range 'A1:B2'
++                Get-XlsRange -Worksheet $ws -Range 'A1:B2' -AsJson $jsonPath | Out-Null
++
++                Set-XlsRange -Worksheet $ws -Range 'D1' -FromJson $jsonPath
++                $actual = Get-XlsRange -Worksheet $ws -Range 'D1:E2'
++                @($expected, $actual)
++            }
++
++            $expected = $result[0]
++            $actual = $result[1]
++            $actual[0][0] | Should Be $expected[0][0]
++            $actual[0][1] | Should Be $expected[0][1]
++            $actual[1][0] | Should Be $expected[1][0]
++            $actual[1][1] | Should Be $expected[1][1]
++        }
++
++        It 'round-trips an object-array JSON export (-Header) through -FromJson -Header' {
++            $path = New-TempXlsxPath
++            $jsonPath = New-XlsAgentTempFilePath -Extension 'json'
++
++            $result = Invoke-XlsSession -Path $path -ScriptBlock {
++                param($app, $wb)
++                $ws = $wb.Worksheets.Item(1)
++
++                $ws.Range('A1:B3').Value2 = (New-XlsObjectArray2D -Rows @(
++                    @('Name', 'Score'),
++                    @('Alice', 10.0),
++                    @('Bob', 20.0)
++                ))
++                Get-XlsRange -Worksheet $ws -Range 'A1:B3' -Header -AsJson $jsonPath | Out-Null
++
++                Set-XlsRange -Worksheet $ws -Range 'D1' -FromJson $jsonPath -Header
++                Get-XlsRange -Worksheet $ws -Range 'D1:E3' -Header
++            }
++
++            $result.Count | Should Be 2
++            $result[0].Name | Should Be 'Alice'
++            $result[0].Score | Should Be 10.0
++            $result[1].Name | Should Be 'Bob'
++            $result[1].Score | Should Be 20.0
++        }
++
++        It 'throws a next-step error for an invalid range address' {
++            $path = New-TempXlsxPath
++
++            $errorSeen = $null
++            try {
++                Invoke-XlsSession -Path $path -ScriptBlock {
++                    param($app, $wb)
++                    $ws = $wb.Worksheets.Item(1)
++                    Set-XlsRange -Worksheet $ws -Range 'NotAValidAddr$$' -Data @(, @(1.0))
++                }
++            }
++            catch {
++                $errorSeen = $_
++            }
++
++            $errorSeen | Should Not Be $null
++            $errorSeen.Exception.Message | Should Match 'Invalid range address'
++        }
++
++        It 'throws a next-step error when an explicit multi-cell range does not match the data dimensions' {
++            $path = New-TempXlsxPath
++
++            $errorSeen = $null
++            try {
++                Invoke-XlsSession -Path $path -ScriptBlock {
++                    param($app, $wb)
++                    $ws = $wb.Worksheets.Item(1)
++                    Set-XlsRange -Worksheet $ws -Range 'A1:B2' -Data @(@(1.0, 2.0, 3.0), @(4.0, 5.0, 6.0), @(7.0, 8.0, 9.0))
++                }
++            }
++            catch {
++                $errorSeen = $_
++            }
++
++            $errorSeen | Should Not Be $null
++            $errorSeen.Exception.Message | Should Match '2 x 2'
++            $errorSeen.Exception.Message | Should Match '3 x 3'
++        }
++
++        It 'throws when row lengths in -Data are inconsistent (no partial write)' {
++            $path = New-TempXlsxPath
++
++            $errorSeen = $null
++            try {
++                Invoke-XlsSession -Path $path -ScriptBlock {
++                    param($app, $wb)
++                    $ws = $wb.Worksheets.Item(1)
++                    Set-XlsRange -Worksheet $ws -Range 'A1' -Data @(@(1.0, 2.0), @(3.0))
++                }
++            }
++            catch {
++                $errorSeen = $_
++            }
++
++            $errorSeen | Should Not Be $null
++            $errorSeen.Exception.Message | Should Match 'Row 2'
++        }
++    }
++}
+diff --git a/tests/T01.Tests.ps1 b/tests/T01.Tests.ps1
+index 54cdf33..d11f055 100644
+--- a/tests/T01.Tests.ps1
++++ b/tests/T01.Tests.ps1
+@@ -95,7 +95,10 @@ Describe 'XlsAgent module skeleton (T-01)' {
+         # いるため、このループに残しても偶然パスしてしまう。実装済みという事実を明示するため除外する）。
+         # T-08: Get-XlsModel 実装済み（存在しないシート名・無効な -Range アドレスの throw が残って
+         # いるため、このループに残しても偶然パスしてしまう。実装済みという事実を明示するため除外する）。
+-        $_ -notin @('Invoke-XlsSession', 'Save-XlsWorkbook', 'Clear-XlsOrphans', 'Get-XlsRange', 'Get-XlsOverview', 'Get-XlsModel')
++        # T-09: Set-XlsRange 実装済み（無効な範囲アドレス・寸法不一致・データ 0 行/0 列等の検証の
++        # throw が残っているため、このループに残しても偶然パスしてしまう。実装済みという事実を
++        # 明示するため除外する）。
++        $_ -notin @('Invoke-XlsSession', 'Save-XlsWorkbook', 'Clear-XlsOrphans', 'Get-XlsRange', 'Get-XlsOverview', 'Get-XlsModel', 'Set-XlsRange')
+     }
+ 
+     foreach ($fn in $script:StillStubFunctions) {
