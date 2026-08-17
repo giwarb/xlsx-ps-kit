@@ -12,7 +12,7 @@ description: "Use this skill any time a spreadsheet file is the primary input or
 | **Quick look** at a sheet | `Get-XlsOverview -Path file.xlsx` — `## SheetName` per sheet; reads `.xlsm` too. No cell coordinates, so don't plan edits from it |
 | **Read** a model (formulas *and* values) | `Get-XlsModel -Path file.xlsx -FormulasOnly` — one pass gives both |
 
-> `Import-Module scripts/XlsAgent.psm1` first. Nothing to install. Every COM call goes inside `Invoke-XlsSession`; never `New-Object -ComObject` yourself and never `GetActiveObject`. If a prior run crashed and left an `EXCEL.EXE` behind, run `Clear-XlsOrphans` — it only stops processes this module itself started (tracked by PID + start time), never a live user session. Don't reach for `Get-Process EXCEL | Stop-Process`.
+> `Import-Module scripts/XlsAgent.psm1` first. Nothing to install. Every COM call goes inside `Invoke-XlsSession`; never `New-Object -ComObject` yourself and never `GetActiveObject`. If a prior run crashed and left an `EXCEL.EXE` behind, run `Clear-XlsOrphans` — it only stops processes this module itself started (tracked by PID + start time), never a live user session. Don't reach for `Get-Process EXCEL | Stop-Process`. Every `Invoke-XlsSession` call closes its workbook with `SaveChanges:=$false`, so edits never outlive that one call — make the edits and the `Save-XlsWorkbook` call inside the *same* `ScriptBlock`; splitting them across two `Invoke-XlsSession` calls silently discards the edit (the second call reopens the file unchanged from disk).
 
 > Script paths below are relative to this skill's directory.
 

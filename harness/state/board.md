@@ -18,5 +18,5 @@
 | T-12 | Test-XlsFormulas.ps1 CLI | done | r4 | 2026-08-18 |
 | T-13 | com-constants.md 充填 | done | r2 | 2026-08-18 |
 | T-14 | patterns.md | done | r2 | 2026-08-18 |
-| T-15 | SKILL.md 確定 | review | r3 | 2026-08-18 |
-| T-16 | ベンチマーク | todo | - | |
+| T-15 | SKILL.md 確定 | done | r3 | 2026-08-18 |
+| T-16 | ベンチマーク | done | r1 | 2026-08-18 |

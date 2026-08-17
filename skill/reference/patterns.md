@@ -258,3 +258,26 @@ function Set-MyCell {
     $Worksheet.Range($Range).Value2 = $grid
 }
 ```
+
+**既定（General）書式のセルに `Range.Value2` で数値に見える文字列（`"2024"` など）を書き込むと、
+Excel が自動的に数値（`[double]`）へ変換し、文字列のまま保持されない**（T-16、fixtures 生成で
+実機確認。SKILL.md 財務モデル節の「年は文字列として（`"2024"`、`2,024` ではない）」を満たすのに
+文字列を渡すだけでは不十分）。`Set-XlsRange` 自身は `NumberFormat` を一切変更しない仕様のため、
+これだけでは防げない。書き込む**前**に対象セルへ `NumberFormat = '@'`（テキスト書式）を設定して
+おくと自動変換を回避できる（先頭にアポストロフィを付ける方法でも防げる。アポストロフィは値から
+取り除かれて文字列として保持される（実測）。書式意図を明示できるため、ここでは書き込み前の
+`NumberFormat='@'` を推奨する）。`NumberFormat` を後から `'@'` に変えても、既に
+数値化された値は文字列に戻らない（順序が重要）。
+
+```powershell
+param($app, $wb)
+$ws = $wb.Worksheets.Item(1)
+$ws.Range('A1').NumberFormat = '@'   # 書き込み前に設定する（後からでは手遅れ）
+$data = New-Object 'object[,]' 1,1
+$data[0,0] = '2024'
+$ws.Range('A1').Value2 = $data
+```
+
+確認: 2026-08-18（T-16、実機。既定書式のまま書き込むと `Range.Value2` の読み戻し型が
+`System.Double`（2024）になり、`NumberFormat='@'` を先に設定してから同じ文字列を書き込むと
+`System.String`（"2024"）のまま保持されることを比較確認した）。
