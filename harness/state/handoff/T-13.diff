@@ -1,0 +1,433 @@
+diff --git a/harness/state/board.md b/harness/state/board.md
+index c04d45b..d4c71a9 100644
+--- a/harness/state/board.md
++++ b/harness/state/board.md
+@@ -16,7 +16,7 @@
+ | T-10 | Test-XlsFormulas 関数 | done | r1 | 2026-08-17 |
+ | T-11 | 外部リンク refused / -Force | done | r1 | 2026-08-17 |
+ | T-12 | Test-XlsFormulas.ps1 CLI | done | r4 | 2026-08-18 |
+-| T-13 | com-constants.md 充填 | impl | r1 | 2026-08-18 |
++| T-13 | com-constants.md 充填 | review | r2 | 2026-08-18 |
+ | T-14 | patterns.md | todo | - | |
+ | T-15 | SKILL.md 確定 | todo | - | |
+ | T-16 | ベンチマーク | todo | - | |
+diff --git a/harness/state/handoff/T-13.diff b/harness/state/handoff/T-13.diff
+new file mode 100644
+index 0000000..e69de29
+diff --git a/harness/state/reviews/T-13.md b/harness/state/reviews/T-13.md
+new file mode 100644
+index 0000000..87264c3
+--- /dev/null
++++ b/harness/state/reviews/T-13.md
+@@ -0,0 +1,101 @@
++# Review T-13 (round 1)
++
++## 判定: fix
++
++## テスト実行
++
++- コマンド: 未実行（コード変更がないため Pester は不要）
++- 結果: passed - / failed -
++- EXCEL.EXE 差分: 該当なし（Excel COM を起動していない）
++
++## チェックリスト
++
++| # | 項目 | ○/×/- | メモ |
++|---|---|---:|---|
++| C-1 | 関数シグネチャが設計と一致 | - | コード変更なし。 |
++| C-2 | 戻り値の形が設計と一致 | - | コード変更なし。 |
++| C-3 | Test-XlsFormulas JSON 契約 | - | 対象外。 |
++| C-4 | exit code 契約 | - | 対象外。 |
++| C-5 | §0 の確定事項に変更なし | ○ | reference 文書とタスク管理ファイルのみ。 |
++| C-6 | タスク範囲外を触っていない | ○ | board、タスクカード、com-constants.md の更新に限定。 |
++| S-1 | GetActiveObject を使っていない | - | 実行コード変更なし。 |
++| S-2 | COM が Invoke-XlsSession 外に漏れていない | - | 実測スクリプトは保存対象外。実装メモ上は ScriptBlock 内。 |
++| S-3 | finally の終了順序 | - | 対象外。 |
++| S-4 | throw 後にプロセスが残らない | - | 対象外。 |
++| S-5 | Value2 を適切に使用 | - | 実行コード変更なし。 |
++| S-6 | 2 次元代入が object[,] | - | 対象外。 |
++| S-7 | SpecialCells の例外処理 | - | 対象外。 |
++| S-8 | 危険な Close(SaveChanges:=true) なし | - | 対象外。 |
++| S-9 | Excel 全殺しなし | - | 実行コード変更なし。 |
++| S-10 | ReadOnly・STA 検査 | - | T-03 の対象。 |
++| P-1 | #Requires -Version 5.1 | - | コード変更なし。 |
++| P-2 | PowerShell 7 専用構文なし | - | コード変更なし。 |
++| P-3 | ファイル I/O に UTF8 明示 | - | コード変更なし。 |
++| P-4 | Pester 3.4 互換 | - | テスト変更なし。 |
++| T-1 | Pester が緑 | - | タスク指示どおり未実行。 |
++| T-2 | AfterEach に残留検査 | - | テスト変更なし。 |
++| T-3 | 実 Excel の統合テスト | - | テスト変更なし。 |
++| T-4 | 受け入れ要点を網羅 | - | コードの受け入れテストを伴わない文書タスク。 |
++| T-5 | 異常系テスト | - | 対象外。 |
++| Q-1 | コメントベースヘルプ | - | 対象外。 |
++| Q-2 | 次の一手が分かるエラー | - | 対象外。 |
++| Q-3 | COM 定数の集約・文書化 | ○ | モジュール使用分だけ `$script:Xl` に置き、reference 専用定数を追加しない判断はタスクカードおよび G-02 と整合。 |
++| Q-4 | 実装メモに COM の罠がある | ○ | オプション引数の `[Type]::Missing` などを記録。 |
++| Q-5 | 自己チェックの○が事実と一致 | × | G-12 の○は下記 blocking が残るため一致しない。 |
++| T13-1 | G-12：全行に実測日・確認方法 | × | 38 行すべてに日付はあるが、xlCalculationManual 行に確認方法がない。 |
++| T13-2 | 定数値・BGR 式が正しい | × | 指定重点値と BGR 式は正しいが、xlErr* が公知の XlCVError 値と区別されていない。 |
++| T13-3 | 書式統一・エージェントへの有用性 | × | Range.Insert の列挙名、Font.Color の過度に一般化した説明、括弧表記に修正余地。 |
++| T13-4 | `$script:Xl` 非追加が G-02 と整合 | ○ | 高水準ラッパーを追加せず、モジュール未使用の定数を reference のみに置く判断は妥当。 |
++
++## 指摘
++
++### [blocking] xlErr* の値が Excel の公知の定数値ではなく、Value2 のマーシャリング後コード
++
++- 場所: `skill/reference/com-constants.md:29`
++- 内容: Microsoft の [XlCVError 列挙](https://learn.microsoft.com/en-us/office/vba/api/excel.xlcverror)では、例えば `xlErrValue=2015`、`xlErrNull=2000`。現在の負数は、PowerShell COM で `Range.Value2` を読んだ際の HRESULT 形式の Int32 であり、実測値としては正しいものの、Excel 定数の名前と値の組としては異なる。現在の表はスキル利用エージェントが XlCVError 定数として流用する危険があり、記録された実測が検証した量と表のラベルが一致しないため G-12 違反。
++- 修正案: 公式列挙値と PowerShell で観測した値を明確に分離する。
++
++```markdown
++| Excel 名 | XlCVError 値 | Range.Value2 の実測 Int32 | 用途 | 確認 |
++|---|---:|---:|---|---|
++| xlErrValue | 2015 | -2146826273 | PowerShell COM で読み取った #VALUE! の判定 | ... |
++```
++
++`$script:Xl.xlErr*` は「モジュール内のローカルな Value2 コード別名であり、Excel の XlCVError 定数値ではない」と明記する。
++
++### [blocking] 全行に確認方法があるという G-12 記録を満たしていない
++
++- 場所: `skill/reference/com-constants.md:14`
++- 内容: `xlCalculationManual` は日付・タスク・実機という記録だけで、「何に設定し、何を読み戻したか」がない。タスクカードの完了条件と、同ファイル冒頭の統一書式に反するため、G-12 をレビュー側で確認できない。
++- 修正案:
++
++```markdown
++| xlCalculationManual | -4135 | Application.Calculation | 2026-08-17（T-03、実機。Workbook を開いた後に `Application.Calculation = -4135` を設定し、同プロパティを読み戻して -4135 を確認） |
++```
++
++### [blocking] Font.Color の「常にスカラー」は実測範囲を超えた主張
++
++- 場所: `skill/reference/com-constants.md:93`
++- 内容: 実装メモに記録された実測は、単一の色を代入して同値を読み戻したもの。そこから「書き込み・読み戻しとも常に Long のスカラー」と一般化する根拠は記録されていない。公式仕様でも `Font.Color` は [read/write Variant](https://learn.microsoft.com/en-us/office/vba/api/excel.font.color) であり、複数セル・混在色を含めた「常に」は G-12 上の未確認内容になる。
++- 修正案: 「今回確認した単一セル／同一色範囲では BGR Long を読み戻した」に限定する。普遍的な記述を残すなら、混在色範囲も実測し、対象範囲と戻り値型・値を記録する。
++
++### [should-fix] Range.Insert にはメソッド固有の xlShiftToRight を使う
++
++- 場所: `skill/reference/com-constants.md:69`
++- 内容: `-4161` と右シフトの挙動は正しい。一方、`Range.Insert` の Shift 引数で公式に定義される `XlInsertShiftDirection` の名前は [xlShiftToRight](https://learn.microsoft.com/en-us/office/vba/api/excel.xlinsertshiftdirection)。`xlToRight` は同値の別列挙名で、用途欄と対応する列挙型がずれているため、エージェント向け reference として紛らわしい。
++- 修正案: com-constants.md とタスクカードの `xlToRight` を `xlShiftToRight` に統一する。値 `-4161` と実測記録は維持してよい。
++
++### [nit] 確認欄の括弧とコード表記が一行だけ不統一
++
++- 場所: `skill/reference/com-constants.md:61`
++- 内容: 行末だけ半角 `)` で閉じ、`ChartObject.Delete()` もコード表記になっていない。
++- 修正案: ``確認。使用後は `ChartObject.Delete()` で後始末）`` とする。
++
++## 良かった点（1〜2 行、次のタスクでも続けてほしいこと）
++
++重点値の `xlCenter=-4108`、`xlContinuous=1`、`xlThin=2`、`xlSrcRange=1`、`xlYes=1` は Microsoft の公知値と一致する。BGR 式 `R + G*256 + B*65536` と例 `RGB(12,34,56)=3678732` も、[COLORREF の 0x00bbggrr 配置](https://learn.microsoft.com/en-us/windows/win32/gdi/colorref)と一致する。用途別の節分けと、reference 専用定数を `$script:Xl` に追加しない判断も適切。
++
++## SKILL.md gotchas 候補（実装メモに書かれていないが気づいた罠があれば）
++
++- 数値を COM プロパティへ代入して読み戻す実測は「その数値の挙動」を確認するが、型ライブラリ上の列挙名までは確認しない。メソッド固有の列挙名との照合が別途必要。
++- `Range.Value2` のエラー Int32 は XlCVError の公知の列挙値そのものではなく、COM マーシャリング後の HRESULT 形式になる。
+\ No newline at end of file
+diff --git a/harness/state/tasks/T-13.md b/harness/state/tasks/T-13.md
+index cd4af6d..713fcc9 100644
+--- a/harness/state/tasks/T-13.md
++++ b/harness/state/tasks/T-13.md
+@@ -29,11 +29,95 @@
+ 
+ ## 実装メモ(Sonnet が記入)
+ 
++### 方針
++- `skill/reference/com-constants.md` を「計算モード・保存形式」「SpecialCells / エラー判定」
++  「配置・罫線」「条件付き書式・データ検証」「グラフ」「セル挿入」「テーブル化」「財務モデルの
++  色規約（Font.Color RGB 直接代入）」の節に分け、全行を「名前 / 値 / 用途 / 確認」の統一書式に揃えた。
++  「確認」列は「日付（T-XX、実機。何を設定し何を読み戻して確認したか）」のテンプレートに統一し、
++  未確認の空欄行を 1 つも残していない（G-12）。
++- `$script:Xl`（XlsAgent.psm1）には追加していない。今回充填した定数（xlCenter/xlLeft/xlRight/
++  xlContinuous/xlThin/xlEdgeBottom/xlInsideHorizontal/xlValidateList/xlCellValue/xlGreater/
++  xlColumnClustered/xlLine/xlShiftDown/xlShiftToRight/xlSrcRange/xlYes）はいずれも書式・罫線・条件付き
++  書式・グラフ・テーブル化の高水準操作に使うもので、モジュール本体の 8 公開関数はどれも使っていない
++  （G-02: 書式・罫線・グラフ等の高水準ラッパーを追加しない、という既定方針のため）。よってモジュール
++  (.psm1) は変更していない。タスクカードの「$script:Xl への追加はモジュール本体が使う定数のみ」
++  という指示にも合致する。
++- モジュールを変更していないため、Pester の分割回帰（A/B/C）は実行していない
++  （タスクカードの完了条件どおり「変更した場合のみ」）。
++
++### 実測方法（使い捨てスクリプト、リポジトリには残していない）
++- `Invoke-XlsSession`（変更なしの既存関数）の ScriptBlock 内で、1 回の Excel セッション中に以下を
++  すべて実測した（スクリプトは `%TEMP%` 配下の一時ファイルに書き、実行後・確認後に削除済み）。
++  1. `Range.HorizontalAlignment` に -4108/-4131/-4152 を代入 → 読み戻して xlCenter/xlLeft/xlRight を確認。
++  2. `Range.Borders.Item(9)`（下辺, xlEdgeBottom）と `Range.Borders.Item(12)`（2 行×2 列範囲の内側水平線,
++     xlInsideHorizontal）を取得し、それぞれに `LineStyle = 1`（xlContinuous）・`Weight = 2`（xlThin）を
++     代入・読み戻して確認。
++  3. `Range.Validation.Add(3, 1, 3, 'A,B,C')` 実行後 `Validation.Type` が 3（xlValidateList）であることを確認。
++  4. `Range.FormatConditions.Add(1, 5, '=3')` 実行後、生成された FormatCondition の `.Type`=1（xlCellValue）・
++     `.Operator`=5（xlGreater）を確認。
++  5. `Worksheet.ChartObjects().Add(...).Chart` でグラフを作成し `ChartType` に 51（xlColumnClustered）→
++     4（xlLine）の順に代入・読み戻して確認。確認後 `ChartObject.Delete()` で後始末。
++  6. 1 セルに値を入れて `Range.Insert(-4121)`（xlShiftDown）/`Range.Insert(-4161)`（xlShiftToRight）を実行し、
++     元セルが空になり値が想定方向に 1 個ずれることを確認。
++  7. `Worksheet.ListObjects.Add(1, Range, [Type]::Missing, 1, [Type]::Missing, [Type]::Missing)`
++     （SourceType=1=xlSrcRange, HasHeaders=1=xlYes）でテーブル化し、`ListObject.SourceType`=1・
++     `ListObject.HeaderRowRange.Value2` がヘッダー文字列と一致することを確認。
++  8. 財務モデル色規約: `Range.Font.Color` に 16711680（青=RGB(0,0,255)）/0（黒）/32768（緑=RGB(0,128,0)）/
++     255（赤=RGB(255,0,0)）を代入・読み戻して一致を確認。あわせて `R + G*256 + B*65536` という
++     BGR Long 変換式そのものの正しさを RGB(12,34,56)=3678732 で検証した（VBA の `RGB()` に相当する
++     組み込み関数は COM から呼べないため、この式を reference に明文化した）。
++  - すべて `OK` で完了し、例外・想定外の値は 0 件だった。実行後 `Get-Process EXCEL` で残骸なしを確認済み。
++
++### 踏んだ COM の罠（1 行ずつ）
++- 使い捨てスクリプト内で `Hashtable` の結果を `Invoke-XlsSession` の ScriptBlock から
++  `return $out`（unary comma なし）で返しても、Hashtable は他の IEnumerable（HashSet 等）と違い
++  PowerShell の関数境界での自動展開（要素数 1→スカラー化、2 個以上→object[] 化）を受けないことを
++  確認した（`function Test-Ht { return @{a=1} }` の戻り値の型が Hashtable のまま）。ただし今回は
++  T-03/T-06/T-08 で確立済みの `return , $x` パターンに念のため合わせて記述した（実害はないが、
++  他の COM コレクション（配列・HashSet 等）を返す場合は unary comma が必須なので、混同しないよう
++  Hashtable は例外というより「たまたま安全」という位置づけで扱うべき、という点を記録しておく）。
++- `ListObjects.Add` や `Chart` 系のように COM のオプション引数を省略したい場合は `$null` ではなく
++  `[Type]::Missing` を渡す必要がある（既存パターンと同じ）。
++
++### レビュー対応（round 1 → round 2、G-16: 指摘ごとに対応した／対応しない（理由）を記載）
++
++1. **[blocking] xlErr\* が公知の XlCVError 値と区別されていない** → 対応した。
++   `com-constants.md` の「SpecialCells / エラー判定」節を、レビューのスニペットどおり
++   「Excel 名 / XlCVError 値（公式・未実測、Microsoft Learn 出典）/ Range.Value2 の実測 Int32 /
++   用途 / 確認」に分離した。`$script:Xl.xlErr*` は「モジュールローカルな Value2 コード別名で
++   あり XlCVError 定数値ではない」ことを明記する説明段落を追加した。XlCVError 側の値
++   （xlErrNull=2000, xlErrDiv0=2007, xlErrValue=2015, xlErrRef=2023, xlErrName=2029,
++   xlErrNum=2036, xlErrNA=2042）は Microsoft Learn の公式列挙定義の転記であり実測していない旨を
++   各行に明記した（G-12 は「出典明記の公式値」と「実測列」の分離で担保）。
++2. **[blocking] xlCalculationManual 行に確認方法がない** → 対応した。T-03 の
++   `Invoke-XlsSession.Tests.ps1` で「Open/Add 後に `Application.Calculation = -4135` を設定し、
++   ScriptBlock 内で同プロパティを読み戻すと -4135 のまま」であることを検証している事実に基づき、
++   統一書式（何を設定し何を読み戻したか）に沿って確認欄を書き直した。新規の COM 実測は行っていない
++   （既存テストで既に確認済みの内容を記録欄に反映しただけ）。
++3. **[blocking] Font.Color の「常にスカラー」が実測範囲を超えた一般化** → 対応した（追加実測あり）。
++   記述を「今回確認した単一セル、および全セルが同一色の範囲では」に限定した上で、混在色範囲での
++   挙動を追加実測した: 2 セル範囲の各セルに異なる `Font.Color`（255 / 16711680）を設定してから
++   範囲まとめて `Font.Color` を読むと `System.DBNull` が返ることを実機で確認し（同一色範囲では
++   `System.Double` のスカラーが返ることも対照区として確認）、com-constants.md に追記した。
++   使い捨てスクリプトで `Invoke-XlsSession` 内・フォアグラウンドで実行、確認後に温存せず削除した。
++4. **[should-fix] Range.Insert は xlShiftToRight に統一** → 対応した。
++   `com-constants.md` の該当行の名前を `xlToRight` → `xlShiftToRight` に修正し、値 `-4161` と
++   実測記録はそのまま維持した。本タスクカードの「方針」「実測方法」節の表記もあわせて修正した。
++5. **[nit] 確認欄の括弧・コード表記の不統一** → 対応した。
++   `com-constants.md` の xlColumnClustered 行の確認欄を、レビュー修正案どおり全角括弧で閉じ、
++   `ChartObject.Delete()` をコード表記（バッククォート）に統一した。
++
++以上、round 1 の blocking 3 件・should-fix 1 件・nit 1 件すべてに対応した。追加実測（Font.Color
++混在色範囲）は `Invoke-XlsSession` の ScriptBlock 内・フォアグラウンドで実行し、実行後
++`Get-Process EXCEL` で残骸なしを確認済み。モジュール (.psm1) は今回も変更していないため、
++Pester の分割回帰は引き続き対象外。
++
+ ## 自己チェック
+ | # | 項目 | ○/× |
+ |---|---|---|
+-| G-05 | GetActiveObject を使っていない | |
+-| G-06 | COM は Invoke-XlsSession 内のみ | |
+-| G-10 | 全殺しなし | |
+-| G-11 | 7 専用構文なし | |
+-| G-12 | 実測確認済みのみ収載 | |
++| G-05 | GetActiveObject を使っていない | ○ |
++| G-06 | COM は Invoke-XlsSession 内のみ | ○ |
++| G-10 | 全殺しなし | ○ |
++| G-11 | 7 専用構文なし | ○ |
++| G-12 | 実測確認済みのみ収載 | ○ |
++| G-16 | レビュー指摘ごとに対応した／対応しない（理由）を記載 | ○ |
+diff --git a/harness/state/tasks/T-14.md b/harness/state/tasks/T-14.md
+new file mode 100644
+index 0000000..a865903
+--- /dev/null
++++ b/harness/state/tasks/T-14.md
+@@ -0,0 +1,44 @@
++# T-14 patterns.md(実行確認済み COM スニペット集)
++
++## 目的
++`skill/reference/patterns.md` を、スキル利用エージェントが Invoke-XlsSession の ScriptBlock 内に
++そのまま貼って使える「実行確認済みスニペット集」として完成させる。
++
++> 01-design.md §6: ヘッダー行書式/テーブル化(ListObjects.Add)/列幅自動調整/コメント追加(AddComment と
++> AddCommentThreaded の両方)/条件付き書式/データ検証/グラフ挿入/名前定義/シート追加・複製・削除。各 5〜10 行。
++
++## 入力
++- 参照ファイル: docs/01-design.md §6、docs/03-guardrails.md G-12
++- 前提タスク: T-13(完了済み。定数実測は再利用可)
++- 前提レビュー: T-13 系(公式列挙名と実測値の区別、一般化しすぎない記述)
++
++## 作業内容
++- 9 パターンそれぞれについて:
++  1. `param($app, $wb)` の ScriptBlock 内で動く 5〜10 行のスニペットを書く。
++  2. 実際に Invoke-XlsSession で実行し、期待どおり動くことを確認(使い捨てスクリプト。保存が要る場合は Save-XlsWorkbook 経由)。
++  3. patterns.md に「何をするか 1 行 + スニペット + 実行確認の 1 行(日付・確認した結果)」の形で載せる。
++- 定数はマジックナンバー直書きでよいが、コメントで定数名を併記(com-constants.md と相互参照)。
++- AddCommentThreaded は Excel のバージョンによっては使えない可能性がある。使えない場合はその事実を実測して明記(「この環境の Excel ビルド X では動作/エラー Y」)— それも有益な reference になる。
++- G-12: 実行して確認できたスニペットだけを載せる。動かなかったものは「動かなかった」事実ごと記録するか、載せない。
++- モジュール(.psm1)は変更しない想定。変更しない限り Pester 回帰は不要。
++- 実測はフォアグラウンドのみ。run_in_background / Monitor 禁止。EXCEL.EXE を残さない。
++
++## 成果物
++- `skill/reference/patterns.md`(完成形)
++
++## 完了条件(Definition of Done)
++- [ ] 9 パターンすべてに実行確認の記録がある(G-12)
++- [ ] スニペットが Invoke-XlsSession の ScriptBlock 内で完結している(G-06 前提の書き方)
++- [ ] Codex レビューで blocking ゼロ
++
++## 実装メモ(Sonnet が記入)
++
++## 自己チェック
++| # | 項目 | ○/× |
++|---|---|---|
++| G-05 | GetActiveObject を使っていない | |
++| G-06 | COM は Invoke-XlsSession 内のみ | |
++| G-09 | 保存は Save-XlsWorkbook のみ | |
++| G-10 | 全殺しなし | |
++| G-11 | 7 専用構文なし | |
++| G-12 | 実行確認済みのみ収載 | |
+diff --git a/skill/reference/com-constants.md b/skill/reference/com-constants.md
+index e5d1a76..f92e8ef 100644
+--- a/skill/reference/com-constants.md
++++ b/skill/reference/com-constants.md
+@@ -1,41 +1,120 @@
+ # COM constants (Excel)
+ 
+-<!-- T-13 で実測充填。「確認」列は実行して確認した日付を入れる。未確認の行を残さない（G-12） -->
++<!-- T-13 で棚卸し・実測充填を完了。「確認」列は実行して確認した日付・タスク・確認方法を必ず入れる。
++     未確認の行は残さない（G-12）。書式: 日付（T-XX、実機。<何を設定し何を読み戻して確認したか>）。 -->
+ 
+-`XlsAgent.psm1` の `$script:Xl` と同期させる。
++`$script:Xl`（`XlsAgent.psm1`）に載っているのは「モジュール本体の公開関数が実際に使う定数」のみ。
++書式・罫線・テーブル・グラフ系の定数はモジュール本体が高水準ラッパーを持たない方針（G-02）のため
++`$script:Xl` には追加せず、このファイルにのみ実測結果を記録する（reference 専用）。
++
++## 計算モード・保存形式
+ 
+ | 名前 | 値 | 用途 | 確認 |
+ |---|---|---|---|
+-| xlCellTypeFormulas | -4123 | SpecialCells | 2026-08-17（T-08 Get-XlsModel、実機。`Range.SpecialCells(-4123)` で数式セルのみの Range を取得、ヒットなしは HRESULT 0x800A03EC 例外になることを確認） |
+-| xlErrors | 16 | SpecialCells 第 2 引数 | 2026-08-17（T-10 Test-XlsFormulas、実機。`Range.SpecialCells(-4123, 16)` で「エラー値を返す数式セルだけ」の Range を取得できることを確認。ヒットなしは xlCellTypeFormulas 単独と同じ HRESULT 0x800A03EC 例外） |
+-| xlCalculationManual | -4135 | Application.Calculation | 2026-08-17（T-03 Invoke-XlsSession、実機） |
++| xlCalculationManual | -4135 | Application.Calculation | 2026-08-17（T-03、実機。Invoke-XlsSession が Workbook を開いた後に `Application.Calculation = -4135` を設定し、ScriptBlock 内で同プロパティを読み戻すと -4135 のままであることを `Invoke-XlsSession.Tests.ps1` で確認） |
+ | xlCalculationAutomatic | -4105 | Application.Calculation | 2026-08-17（T-04 Save-XlsWorkbook、実機。Automatic のまま保存すると xl/workbook.xml の calcPr から calcMode 属性が省略されることまで確認） |
+ | xlOpenXMLWorkbook | 51 | SaveAs .xlsx | 2026-08-17（T-04 Save-XlsWorkbook、実機。SaveAs 直後の Workbook.FileFormat で確認） |
+ | xlOpenXMLWorkbookMacroEnabled | 52 | SaveAs .xlsm | 2026-08-17（T-04 Save-XlsWorkbook、実機。SaveAs 直後・再オープン後とも FileFormat=52 を確認） |
+ | xlOpenXMLTemplateMacroEnabled | 53 | SaveAs .xltm | 2026-08-17（T-04 Save-XlsWorkbook、実機。SaveAs 直後の Workbook.FileFormat で確認） |
+ | xlOpenXMLTemplate | 54 | SaveAs .xltx | 2026-08-17（T-04 Save-XlsWorkbook、実機。SaveAs 直後の Workbook.FileFormat で確認。Workbooks.Open で開き直すとテンプレートから新規ブックが生成されるため、reopen では確認できない罠あり） |
+ | xlCSV | 6 | SaveAs .csv | 2026-08-17（T-04 Save-XlsWorkbook、実機。SaveAs 直後の Workbook.FileFormat とファイル内容で確認） |
+-| xlExcelLinks | 1 | LinkSources | 2026-08-17（T-08 Get-XlsModel、実機。`Workbook.LinkSources(1)` が未解決の外部リンク先パスを 1-based string[] で返す（リンクなしは $null）ことを確認。T-11 Test-XlsFormulas で refused 判定にも再利用: 実機プローブで、リンク数が 1 件でも常に `string[]`（スカラー化しない）で返ること、要素は `[シート名]` を含まないプレーンなファイルパス（例 `C:\NoSuch\Other.xlsx`）で `Test-Path -LiteralPath` でそのまま存在確認できること、解決済み・未解決を問わず両方が一覧に含まれることを確認） |
+-| xlSrcRange | 1 | ListObjects.Add | |
+-| xlYes | 1 | ListObjects.Add HasHeaders | |
+-| xlCenter | -4108 | HorizontalAlignment | |
+-| xlLeft | -4131 | HorizontalAlignment | |
+-| xlRight | -4152 | HorizontalAlignment | |
+-| xlContinuous | 1 | Borders.LineStyle | |
+-| xlThin | 2 | Borders.Weight | |
+-| xlEdgeBottom | 9 | Borders(index) | |
+-| xlInsideHorizontal | 12 | Borders(index) | |
+-| xlValidateList | 3 | Validation.Add | |
+-| xlCellValue | 1 | FormatConditions.Add | |
+-| xlGreater | 5 | FormatConditions.Add Operator | |
+-| xlColumnClustered | 51 | Chart.ChartType | |
+-| xlLine | 4 | Chart.ChartType | |
+-| xlShiftDown | -4121 | Range.Insert | |
+-| xlToRight | -4161 | Range.Insert | |
+-| xlErrNull | -2146826288 | Range.Value2（エラーセルの生値、#NULL!） | 2026-08-17（T-06 Get-XlsRange、実機。`=SUM(1:1 2:2)` で確認） |
+-| xlErrDiv0 | -2146826281 | Range.Value2（エラーセルの生値、#DIV/0!） | 2026-08-17（T-06 Get-XlsRange、実機。`=1/0` で確認） |
+-| xlErrValue | -2146826273 | Range.Value2（エラーセルの生値、#VALUE!） | 2026-08-17（T-06 Get-XlsRange、実機。`=1/""` で確認） |
+-| xlErrRef | -2146826265 | Range.Value2（エラーセルの生値、#REF!） | 2026-08-17（T-06 Get-XlsRange、実機。`=#REF!` で確認） |
+-| xlErrName | -2146826259 | Range.Value2（エラーセルの生値、#NAME?） | 2026-08-17（T-06 Get-XlsRange、実機。`=NoSuchName` で確認） |
+-| xlErrNum | -2146826252 | Range.Value2（エラーセルの生値、#NUM!） | 2026-08-17（T-06 Get-XlsRange、実機。`=SQRT(-1)` で確認） |
+-| xlErrNA | -2146826246 | Range.Value2（エラーセルの生値、#N/A） | 2026-08-17（T-06 Get-XlsRange、実機。`=NA()` で確認） |
++| xlExcelLinks | 1 | Workbook.LinkSources の Type 引数 | 2026-08-17（T-08 Get-XlsModel、実機。`Workbook.LinkSources(1)` が未解決の外部リンク先パスを 1-based string[] で返す（リンクなしは $null）ことを確認。T-11 Test-XlsFormulas で refused 判定にも再利用: 実機プローブで、リンク数が 1 件でも常に `string[]`（スカラー化しない）で返ること、要素は `[シート名]` を含まないプレーンなファイルパス（例 `C:\NoSuch\Other.xlsx`）で `Test-Path -LiteralPath` でそのまま存在確認できること、解決済み・未解決を問わず両方が一覧に含まれることを確認） |
++
++## SpecialCells / エラー判定
++
++| 名前 | 値 | 用途 | 確認 |
++|---|---|---|---|
++| xlCellTypeFormulas | -4123 | Range.SpecialCells の Type 引数 | 2026-08-17（T-08 Get-XlsModel、実機。`Range.SpecialCells(-4123)` で数式セルのみの Range を取得、ヒットなしは HRESULT 0x800A03EC 例外になることを確認） |
++| xlErrors | 16 | Range.SpecialCells の第 2 引数（Value フィルター） | 2026-08-17（T-10 Test-XlsFormulas、実機。`Range.SpecialCells(-4123, 16)` で「エラー値を返す数式セルだけ」の Range を取得できることを確認。ヒットなしは xlCellTypeFormulas 単独と同じ HRESULT 0x800A03EC 例外） |
++
++### `$script:Xl.xlErr*` について（レビュー指摘 T-13 round 1 blocking 対応）
++
++`$script:Xl.xlErr*`（`xlErrNull`/`xlErrDiv0`/`xlErrValue`/`xlErrRef`/`xlErrName`/`xlErrNum`/`xlErrNA`）は、
++**Excel VBA の `XlCVError` 列挙値ではない**。これらは `Range.Value2` を PowerShell COM 相互運用で
++読んだときにエラーセルが取る .NET 側の生の `Int32` 値（HRESULT 形式）に付けた、このモジュール
++ローカルの別名（Value2 コードエイリアス）であり、Get-XlsRange（`ConvertFrom-XlsValue2`）が
++表示文字列（`#VALUE!` 等）へ変換するためだけに使う。Excel の型ライブラリが定義する `XlCVError`
++列挙値（VBA の `CVErr()` などで使う値）とは名前は似ているが値がまったく異なる別物であり、
++スキル利用エージェントがこの値を `XlCVError` として他の COM API（例: `CVErr`）に渡すと壊れる。
++
++下表は「Excel 公式の `XlCVError` 値（未実測・文献値）」と「`Range.Value2` を実機で読んだときの
++実測 `Int32` 値（＝`$script:Xl.xlErr*` の値）」を明示的に分離して記録する。
++
++| Excel 名 | XlCVError 値（公式、未実測。出典: [Microsoft Learn: XlCVError enumeration](https://learn.microsoft.com/en-us/office/vba/api/excel.xlcverror)） | `Range.Value2` の実測 Int32（`$script:Xl.xlErr*` の値） | 用途 | 確認 |
++|---|---:|---:|---|---|
++| xlErrNull | 2000 | -2146826288 | Range.Value2（エラーセルの生値、#NULL!） | 2026-08-17（T-06 Get-XlsRange、実機。`=SUM(1:1 2:2)` で確認。XlCVError 値 2000 は Microsoft Learn の公式列挙定義を転記したのみで実測はしていない） |
++| xlErrDiv0 | 2007 | -2146826281 | Range.Value2（エラーセルの生値、#DIV/0!） | 2026-08-17（T-06 Get-XlsRange、実機。`=1/0` で確認。XlCVError 値 2007 は Microsoft Learn の公式列挙定義を転記したのみで実測はしていない） |
++| xlErrValue | 2015 | -2146826273 | Range.Value2（エラーセルの生値、#VALUE!） | 2026-08-17（T-06 Get-XlsRange、実機。`=1/""` で確認。XlCVError 値 2015 は Microsoft Learn の公式列挙定義を転記したのみで実測はしていない） |
++| xlErrRef | 2023 | -2146826265 | Range.Value2（エラーセルの生値、#REF!） | 2026-08-17（T-06 Get-XlsRange、実機。`=#REF!` で確認。XlCVError 値 2023 は Microsoft Learn の公式列挙定義を転記したのみで実測はしていない） |
++| xlErrName | 2029 | -2146826259 | Range.Value2（エラーセルの生値、#NAME?） | 2026-08-17（T-06 Get-XlsRange、実機。`=NoSuchName` で確認。XlCVError 値 2029 は Microsoft Learn の公式列挙定義を転記したのみで実測はしていない） |
++| xlErrNum | 2036 | -2146826252 | Range.Value2（エラーセルの生値、#NUM!） | 2026-08-17（T-06 Get-XlsRange、実機。`=SQRT(-1)` で確認。XlCVError 値 2036 は Microsoft Learn の公式列挙定義を転記したのみで実測はしていない） |
++| xlErrNA | 2042 | -2146826246 | Range.Value2（エラーセルの生値、#N/A） | 2026-08-17（T-06 Get-XlsRange、実機。`=NA()` で確認。XlCVError 値 2042 は Microsoft Learn の公式列挙定義を転記したのみで実測はしていない） |
++
++## 配置・罫線（reference 専用、$script:Xl には追加しない）
++
++| 名前 | 値 | 用途 | 確認 |
++|---|---|---|---|
++| xlCenter | -4108 | Range.HorizontalAlignment | 2026-08-18（T-13、実機。セルに値を入れて `HorizontalAlignment = -4108` を代入した直後に同じプロパティを読み戻し、-4108 のまま保持されることを確認） |
++| xlLeft | -4131 | Range.HorizontalAlignment | 2026-08-18（T-13、実機。xlCenter と同じ手順で `HorizontalAlignment = -4131` の代入・読み戻しを確認） |
++| xlRight | -4152 | Range.HorizontalAlignment | 2026-08-18（T-13、実機。xlCenter と同じ手順で `HorizontalAlignment = -4152` の代入・読み戻しを確認） |
++| xlEdgeBottom | 9 | Range.Borders.Item(index) | 2026-08-18（T-13、実機。`Range.Borders.Item(9)` で下辺の Border オブジェクトを取得できること、`.LineStyle`/`.Weight` への代入がそのオブジェクトに反映されることを確認） |
++| xlInsideHorizontal | 12 | Range.Borders.Item(index)（複数行範囲の内側水平線） | 2026-08-18（T-13、実機。2 行×2 列の範囲に対し `Range.Borders.Item(12)` を取得し、`.LineStyle`/`.Weight` への代入・読み戻しを確認） |
++| xlContinuous | 1 | Border.LineStyle | 2026-08-18（T-13、実機。xlEdgeBottom/xlInsideHorizontal で取得した Border オブジェクトに `LineStyle = 1` を代入し、読み戻し値が 1 であることを確認） |
++| xlThin | 2 | Border.Weight | 2026-08-18（T-13、実機。同じ Border オブジェクトに `Weight = 2` を代入し、読み戻し値が 2 であることを確認） |
++
++## 条件付き書式・データ検証（reference 専用）
++
++| 名前 | 値 | 用途 | 確認 |
++|---|---|---|---|
++| xlValidateList | 3 | Range.Validation.Add の Type 引数 | 2026-08-18（T-13、実機。`Validation.Add(3, 1, 3, 'A,B,C')`（Type=3, AlertStyle=xlValidAlertStop, Operator は list では無視される）を実行後、`Range.Validation.Type` が 3 であることを確認） |
++| xlCellValue | 1 | FormatConditions.Add の Type 引数 | 2026-08-18（T-13、実機。`FormatConditions.Add(1, 5, '=3')` を実行後、生成された FormatCondition の `.Type` が 1 であることを確認） |
++| xlGreater | 5 | FormatConditions.Add の Operator 引数 | 2026-08-18（T-13、実機。上と同じ呼び出しで、生成された FormatCondition の `.Operator` が 5 であることを確認） |
++
++## グラフ（reference 専用）
++
++| 名前 | 値 | 用途 | 確認 |
++|---|---|---|---|
++| xlColumnClustered | 51 | Chart.ChartType | 2026-08-18（T-13、実機。`Worksheet.ChartObjects().Add(...).Chart` で作ったグラフに `ChartType = 51` を代入し、読み戻し値が 51 であることを確認。使用後は `ChartObject.Delete()` で後始末） |
++| xlLine | 4 | Chart.ChartType | 2026-08-18（T-13、実機。同じ Chart オブジェクトで `ChartType = 4` に切り替え、読み戻し値が 4 であることを確認） |
++
++## セル挿入（reference 専用）
++
++| 名前 | 値 | 用途 | 確認 |
++|---|---|---|---|
++| xlShiftDown | -4121 | Range.Insert の Shift 引数 | 2026-08-18（T-13、実機。1 セルに値を入れて `Range.Insert(-4121)` した後、元セルが空になり 1 行下のセルへ元の値が移動していることを確認） |
++| xlShiftToRight | -4161 | Range.Insert の Shift 引数 | 2026-08-18（T-13、実機。1 セルに値を入れて `Range.Insert(-4161)` した後、元セルが空になり 1 列右のセルへ元の値が移動していることを確認。レビュー指摘対応（T-13 round 1 should-fix）: `XlInsertShiftDirection` 列挙の公式名は `xlShiftToRight`（`xlToRight` は誤記、値・実測内容は変更なし）） |
++
++## テーブル化（ListObjects、reference 専用）
++
++| 名前 | 値 | 用途 | 確認 |
++|---|---|---|---|
++| xlSrcRange | 1 | ListObjects.Add の SourceType 引数 | 2026-08-18（T-13、実機。`ListObjects.Add(1, Range, [Type]::Missing, 1, [Type]::Missing, [Type]::Missing)` でテーブル化し、生成された ListObject の `.SourceType` が 1 であることを確認） |
++| xlYes | 1 | ListObjects.Add の HasHeaders 引数（第 4 引数） | 2026-08-18（T-13、実機。上と同じ呼び出しで HasHeaders 引数に 1 を渡し、生成された ListObject の `.HeaderRowRange.Value2` が指定したヘッダー文字列と一致することを確認） |
++
++## 財務モデルの色規約（Font.Color への RGB 直接代入）
++
++Excel の COM には VBA の `RGB()` 関数に相当する組み込み関数がないため、PowerShell 側で
++`R + G * 256 + B * 65536`（Windows の BGR 順 Long 値）を自分で計算し、`Range.Font.Color` に
++直接代入する。以下は財務モデルでよく使われる色規約（青=ハードコード入力／黒=同一シート内数式／
++緑=他シート参照／赤=他ブック参照・警告）の Long 値と、計算式そのものの実機確認。
++
++| 用途 | R,G,B | Font.Color に代入する Long 値 | 確認 |
++|---|---|---|---|
++| ハードコード入力（青） | 0, 0, 255 | 16711680 | 2026-08-18（T-13、実機。`Range.Font.Color = 16711680` を代入し、読み戻し値が 16711680 のままであることを確認） |
++| 同一シート内の数式（黒） | 0, 0, 0 | 0 | 2026-08-18（T-13、実機。数式セル（`=A1*2`）に `Font.Color = 0` を代入し、読み戻し値が 0 であることを確認） |
++| 他シート参照の数式（緑） | 0, 128, 0 | 32768 | 2026-08-18（T-13、実機。`Range.Font.Color = 32768` を代入し、読み戻し値が 32768 のままであることを確認） |
++| 他ブック参照・警告（赤） | 255, 0, 0 | 255 | 2026-08-18（T-13、実機。`Range.Font.Color = 255` を代入し、読み戻し値が 255 のままであることを確認） |
++| （検証用）任意の RGB(12,34,56) | 12, 34, 56 | 3678732 | 2026-08-18（T-13、実機。`R + G*256 + B*65536` = `12 + 34*256 + 56*65536` = 3678732 を計算し、`Range.Font.Color` に代入した上で読み戻し値が 3678732 と一致することを確認。計算式自体の正しさを確認する目的の行） |
++
++`Font.Color` は、**今回確認した単一セル、および全セルが同一色の範囲**では、書き込み・読み戻しとも
++BGR 順 Long（実測では .NET 型は `System.Double`）のスカラーで、Windows 標準の `System.Drawing.Color`
++の `R/G/B` から上記の式でそのまま変換できることを実機で確認した（`ColorTranslator` 等の外部依存は
++不要）。「常に」という一般化はしない（レビュー指摘対応、T-13 round 1 blocking）。
++
++**混在色の範囲での挙動（追加実測、T-13 round 2）**: 2 セルの範囲で各セルの `Font.Color` を異なる値
++（255 と 16711680）に設定してから、その範囲 `Range.Font.Color`（複数セルへの読み取りアクセス）を
++まとめて読むと、値ではなく `System.DBNull`（`$null` ではない）が返ることを実機で確認した。これは
++`Get-XlsRange`/`Get-XlsOverview` の `NumberFormat`/`Text` が範囲内で値が揃っていないときに
++`DBNull` を返すのと同じ挙動パターンである（同一色の範囲では `System.Double` のスカラーが返ることも
++同じ実機確認で対照区として確かめた）。エージェントが複数セル範囲へ直接 `Font.Color` を読みに行く
++場合は、`DBNull`（色が揃っていない）を考慮すること。
