@@ -1,0 +1,689 @@
+diff --git a/harness/state/board.md b/harness/state/board.md
+index 14ee626..f0e0f4d 100644
+--- a/harness/state/board.md
++++ b/harness/state/board.md
+@@ -10,7 +10,7 @@
+ | T-04 | Save-XlsWorkbook | done | r2 | 2026-08-17 |
+ | T-05 | Clear-XlsOrphans | done | r2 | 2026-08-17 |
+ | T-06 | Get-XlsRange | done | r4 | 2026-08-17 |
+-| T-07 | Get-XlsOverview | impl | r1 | 2026-08-17 |
++| T-07 | Get-XlsOverview | review | r1 | 2026-08-17 |
+ | T-08 | Get-XlsModel | todo | - | |
+ | T-09 | Set-XlsRange | todo | - | |
+ | T-10 | Test-XlsFormulas 関数 | todo | - | |
+diff --git a/harness/state/tasks/T-07.md b/harness/state/tasks/T-07.md
+index 7cdac62..11440aa 100644
+--- a/harness/state/tasks/T-07.md
++++ b/harness/state/tasks/T-07.md
+@@ -36,20 +36,80 @@
+ - 異常系: 存在しないシート名指定で次の一手が分かる例外。
+ 
+ ## 完了条件(Definition of Done)
+-- [ ] `Invoke-Pester tests/Get-XlsOverview.Tests.ps1` が緑(+全体回帰緑)
+-- [ ] テスト後に EXCEL.EXE が残っていない
+-- [ ] guardrails 自己チェック欄に○
+-- [ ] Codex レビューで blocking ゼロ
++- [x] `Invoke-Pester tests/Get-XlsOverview.Tests.ps1` が緑(+全体回帰緑)
++- [x] テスト後に EXCEL.EXE が残っていない
++- [x] guardrails 自己チェック欄に○
++- [ ] Codex レビューで blocking ゼロ（レビュー待ち）
+ 
+ ## 実装メモ(Sonnet が記入)
+ 
++### 実装方針
++- `Get-XlsOverview` は `Invoke-XlsSession -ReadOnly` の `ScriptBlock` 内で完結させ、呼び出し側に COM を
++  一切見せない。`-Sheet` 未指定時はワークブックのタブ順、指定時は**指定した順序**（タブ順ではない）で
++  出力する。
++- 新規内部ヘルパー 3 つ（いずれも Export しない）:
++  - `ConvertTo-XlsMarkdownTableCell`（純粋関数）: 1 セルの表示文字列を Markdown 表セルとして安全に
++    埋め込める形にエスケープする。
++  - `Get-XlsRangeTextGrid`（COM。Invoke-XlsSession の ScriptBlock 内から呼ばれる前提）: クリップ後の
++    矩形をセル単位 `Cells.Item(r,c).Text` で読み、ジャグ配列にする。
++  - `Format-XlsSheetOverviewMarkdown`（COM）: 1 シート分の `## SheetName` + 表（または `(empty)`）を
++    組み立てる。
++
++### 踏んだ罠・実機確認した挙動（S-05）
++1. **`Range.Text` は複数セル範囲でも例外を投げない — しかし配列を返さない。** 実機で
++   `$ws.Range('A1:B2').Text`（4 セルの値がすべて異なる）を呼ぶと、例外にならず戻り値の型が
++   `System.DBNull` になることを確認した（`Range.NumberFormat` が範囲内で不統一のとき `DBNull` を
++   返すのと同じ挙動）。つまり「範囲内のすべてのセルの表示文字列が完全に同一なら」その 1 個の文字列を
++   スカラーで返し、1 つでも異なれば `DBNull`。複数セルの表示文字列を一括取得する経路は存在しないため、
++   `Get-XlsOverview` は（クリップ後の範囲に限定した上で）常にセル単位 `Cells.Item(r,c).Text` を使う。
++   タスクカードの「一括不可なら…セル単位を許容する」という前提を実機で裏取りした形。
++2. **真に空白のシートの `UsedRange` は `$A$1`（1x1、`Value2=$null`、`Text=''`）。** 実機確認済み。
++   これを「空シート」判定の唯一の根拠にした（`(empty)` を出す条件は「`UsedRange` が 1x1 かつ
++   その唯一のセルの `Text` が空文字列」）。単一セルにのみ実データがあるシート（例: A1 だけに "X"）は
++   この条件に当たらず、通常どおり見出し行のみ 1 行の表になる。
++3. **列幅が狭いと `Range.Text` は `#`（オーバーフロー表示）を返す。** 実機で列幅 2、値
++   `123456789.123` のセルの `Text` が `'#'` になることを確認した。`Get-XlsOverview` は
++   「表示文字列ベース」という設計方針どおりこれをそのまま出す（Excel が実際に見せている文字列であり
++   バグではない）。ただし、これは「概観は編集計画に使うな」という設計上の注意書きの実例そのものであり、
++   SKILL.md の gotchas 候補としても良い（列幅次第で中身が読めないことがある）。
++4. **`Worksheets.Add()` は既定でアクティブシートの手前に挿入される。** 新規追加シートが先頭寄りになり、
++   タブ順が直感と逆になりうる（テストで確認）。`-Sheet` 未指定時の既定順はこの「実際のタブ順」に
++   従うので、テストのシート追加順に依存した assertion を書かないよう注意した（`-Sheet` 指定時は
++   要求した順を保証するテストで検証）。
++5. **`` `u{00D7} `` Unicode エスケープは PowerShell 6.2+ の構文で 5.1 では使えない（G-11）。**
++   最初この構文で書きかけて気づいた。`[char]0x00D7` で乗算記号 `×` を明示的に組み立てる方式に直した。
++6. **Markdown 表セルのエスケープ順序**: バックスラッシュ → パイプ → 改行（CRLF/CR/LF いずれも
++   リテラル 2 文字 `\n` に変換）の順で処理しないと、パイプ/改行エスケープで挿入した `\` 自身を
++   二重エスケープしてしまう。バックスラッシュを最初に処理することで回避した。往復変換（エスケープを
++   戻す）は非対応（概観専用・編集計画には使わない設計方針のため）。
++
++### 実装判断（仕様に明記がないため記録。§7 対応）
++- `MaxRows`/`MaxCols` の既定値は設計どおり 50/30。1 未満は Excel を起動する前にパラメーター検証で
++  弾く（次の一手が分かる例外。Excel プロセスを無駄に起動しない）。
++- クリップ後の範囲の**先頭行**を Markdown 表の見出し行としてそのまま使う（実際にヘッダーかどうかは
++  問わない）。列番号由来のアルファベット見出し（A, B, C...）は「座標を出さない」という設計方針に
++  反するため使わない。Markdown 表として構文的に妥当にするには見出し行が必要なため、シート先頭行を
++  流用する。
++- `... (N rows × M cols total)` の N/M は `UsedRange` の合計行数・合計列数（クリップ前）。行・列の
++  どちらか一方でも上限を超えていれば出す。
++- パイプ・改行のエスケープ方式は上記「踏んだ罠 6」のとおり。
++- 空シートの扱いは上記「踏んだ罠 2」のとおり（1x1 かつ `Text` が空文字列）。
++
++### テスト実行結果
++- `Invoke-Pester -Path tests\Get-XlsOverview.Tests.ps1` → Passed: 13 / Failed: 0（純粋関数 5 件 +
++  実 Excel 統合 8 件）。
++- 全体回帰 `Invoke-Pester -Path tests` → Passed: 104 / Failed: 0（T-01 の
++  `StillStubFunctions` 除外リストに `Get-XlsOverview` を追加。既存タスク T-03〜T-06 と同じ established
++  パターンに従った、T-07 自身の完了に伴う付随修正）。
++- 各実行後、`Get-Process EXCEL` に残骸プロセスなしを確認済み。
++
+ ## 自己チェック
+ | # | 項目 | ○/× |
+ |---|---|---|
+-| G-05 | GetActiveObject を使っていない | |
+-| G-06 | COM は Invoke-XlsSession 内のみ | |
+-| G-07 | Assert-NoOrphanExcel が AfterEach にある | |
+-| G-08 | Value2 代入は [object[,]] のみ | |
+-| G-11 | 7 専用構文なし | |
+-| G-13 | Pester テストがある | |
+-| G-15 | テストは緑 | |
++| G-05 | GetActiveObject を使っていない | ○ |
++| G-06 | COM は Invoke-XlsSession 内のみ | ○ |
++| G-07 | Assert-NoOrphanExcel が AfterEach にある | ○ |
++| G-08 | Value2 代入は [object[,]] のみ | ○（本タスクは読み取り専用。テストフィクスチャは Common.ps1 の New-XlsObjectArray2D/New-XlsSingleCellArray を使用） |
++| G-11 | 7 専用構文なし | ○（`u{00D7}` Unicode エスケープを使わず `[char]0x00D7` に置き換えた） |
++| G-13 | Pester テストがある | ○ |
++| G-15 | テストは緑 | ○（対象 13/13、全体回帰 104/104） |
+diff --git a/skill/scripts/XlsAgent.psm1 b/skill/scripts/XlsAgent.psm1
+index a07c0b2..75e6a33 100644
+--- a/skill/scripts/XlsAgent.psm1
++++ b/skill/scripts/XlsAgent.psm1
+@@ -613,6 +613,206 @@ function Save-XlsWorkbook {
+     }
+ }
+ 
++function ConvertTo-XlsMarkdownTableCell {
++    <#
++    .SYNOPSIS
++        1 セル分の表示文字列（Range.Text）を Markdown 表のセルとして安全に埋め込める形にエスケープする。
++        COM は触らない純粋関数。Format-XlsSheetOverviewMarkdown の内部ヘルパー（T-07）。Export しない。
++    .PARAMETER Text
++        エスケープ対象の表示文字列（$null/空文字列も許容し、空セルとして扱う）。
++    .EXAMPLE
++        ConvertTo-XlsMarkdownTableCell -Text "a|b`nc"
++    .NOTES
++        実装判断（T-07、仕様に明記がないため記録）:
++          1. バックスラッシュを先に `\\` へエスケープする（後続のエスケープが挿入する `\` 自身を
++             二重エスケープしないよう、必ず最初に行う）。
++          2. パイプ `|` を `\|` へエスケープする（Markdown 表の列区切りと衝突させないため）。
++          3. 改行（CRLF/CR/LF いずれも）は表の行区切りと衝突する（Markdown の 1 行 1 レコード構造が
++             壊れる）ため、リテラルの 2 文字 `\n`（バックスラッシュ + n）に置き換える。実際の改行文字
++             ではなく可視化されたエスケープ表記にすることで、セル内改行があったという情報を失わずに
++             1 行に収める。
++        往復変換（エスケープを戻す）はサポート対象外（Get-XlsOverview は概観表示専用で「編集計画には
++        使うな」という設計方針のため、逆変換ができる必要はない）。
++    #>
++    [CmdletBinding()]
++    param(
++        [AllowNull()]
++        [AllowEmptyString()]
++        [string]$Text
++    )
++
++    if ([string]::IsNullOrEmpty($Text)) {
++        return ''
++    }
++
++    $escaped = $Text -replace '\\', '\\'
++    $escaped = $escaped -replace '\|', '\|'
++    $escaped = $escaped -replace "`r`n", '\n'
++    $escaped = $escaped -replace "`r", '\n'
++    $escaped = $escaped -replace "`n", '\n'
++    return $escaped
++}
++
++function Get-XlsRangeTextGrid {
++    <#
++    .SYNOPSIS
++        指定した左上セルからの矩形範囲を、セル単位の Range.Text（表示文字列）でジャグ配列（行の配列の
++        配列）として読み取る。Format-XlsSheetOverviewMarkdown の内部ヘルパー（T-07）。
++        COM は Worksheet/Range オブジェクトのプロパティ読み取りのみ（Invoke-XlsSession の ScriptBlock
++        内から呼ばれる前提。G-06）。Export しない。
++    .PARAMETER Worksheet
++        対象の Worksheet COM オブジェクト。
++    .PARAMETER TopRow
++        読み取る矩形の左上行（1-based）。
++    .PARAMETER TopCol
++        読み取る矩形の左上列（1-based）。
++    .PARAMETER RowCount
++        読み取る行数。
++    .PARAMETER ColCount
++        読み取る列数。
++    .EXAMPLE
++        Get-XlsRangeTextGrid -Worksheet $ws -TopRow 1 -TopCol 1 -RowCount 10 -ColCount 5
++    .NOTES
++        罠（T-07 実機確認、実装メモ参照）: `Range.Text` は複数セルの範囲に対しても例外を投げない。
++        しかし `Range.NumberFormat`（T-06 の罠と同種）と同じく「範囲内のすべてのセルの表示文字列が
++        完全に同一なら」その文字列 1 個をスカラーで返し、1 つでも異なれば `[DBNull]::Value` を返す
++        （実機確認: 値の異なる 2x2 範囲で `System.DBNull` が返った）。つまり複数セルの表示文字列を
++        一括取得する経路は存在せず、01-design.md §3.3 の「Range.Text（表示文字列）ベース」を満たすには
++        セル単位で読むしかない（T-06 の Get-XlsRange が Value2 は一括、NumberFormat だけセル単位
++        フォールバックするのとは違い、Get-XlsOverview は Text 自体が実質的に常にセル単位になる）。
++        呼び出し元の Format-XlsSheetOverviewMarkdown が MaxRows/MaxCols でクリップした後の小さい範囲
++        だけをこの関数に渡すことで、COM 呼び出し回数を既定 50×30=1500 回程度に抑えている（タスクカード
++        T-07 の実装判断: 一括 Value2+NumberFormat での近似はせず、クリップ後のみセル単位 Text を許容）。
++    #>
++    [CmdletBinding()]
++    param(
++        [Parameter(Mandatory = $true)]
++        $Worksheet,
++
++        [Parameter(Mandatory = $true)]
++        [int]$TopRow,
++
++        [Parameter(Mandatory = $true)]
++        [int]$TopCol,
++
++        [Parameter(Mandatory = $true)]
++        [int]$RowCount,
++
++        [Parameter(Mandatory = $true)]
++        [int]$ColCount
++    )
++
++    $rows = New-Object System.Collections.ArrayList
++    for ($r = 0; $r -lt $RowCount; $r++) {
++        $row = New-Object System.Collections.ArrayList
++        for ($c = 0; $c -lt $ColCount; $c++) {
++            $cell = $Worksheet.Cells.Item($TopRow + $r, $TopCol + $c)
++            [void]$row.Add([string]$cell.Text)
++        }
++        [void]$rows.Add($row.ToArray())
++    }
++
++    return , $rows.ToArray()
++}
++
++function Format-XlsSheetOverviewMarkdown {
++    <#
++    .SYNOPSIS
++        1 シート分の `## SheetName` 見出し + Markdown 表を組み立てる。座標（A1 等）は出さない。
++        Format-XlsSheetOverviewMarkdown の呼び出し元は Get-XlsOverview（T-07）。
++        COM は Worksheet.UsedRange と（Get-XlsRangeTextGrid 経由の）Cells.Item(...).Text の読み取りのみ
++        （Invoke-XlsSession の ScriptBlock 内から呼ばれる前提。G-06）。Export しない。
++    .PARAMETER Worksheet
++        対象の Worksheet COM オブジェクト。
++    .PARAMETER MaxRows
++        表示する最大行数。
++    .PARAMETER MaxCols
++        表示する最大列数。
++    .EXAMPLE
++        Format-XlsSheetOverviewMarkdown -Worksheet $ws -MaxRows 50 -MaxCols 30
++    .NOTES
++        実装判断（T-07、仕様に明記がないため記録）:
++          - 空シートの扱い: `UsedRange` が 1x1 かつその唯一のセルの `Text` が空文字列の場合だけ
++            「空シート」とみなし `(empty)` を出す。真に空白のシートでは `UsedRange` が既定で `$A$1`
++            （1x1、Value2=$null）になることを実機で確認済み（実装メモ参照）。単一セルにのみ実データが
++            あるシート（例: A1 だけに "X"）はこの条件に当たらないため、通常どおり 1 行の表として出す
++            （"X" というヘッダー行のみ、データ行なしの表になる）。数式が空文字列 "" を返す単一セルの
++            シートは表示文字列が空になるため「空シート」に分類されるが、仕様に明記がない縮退ケースで
++            あり実装判断として許容する。
++          - ヘッダー行の扱い: クリップ後の範囲の 1 行目をそのまま Markdown 表の見出し行として使う
++            （実際にヘッダーかどうかは問わない。座標由来の列名（A, B, C...）は「座標を出さない」という
++            設計方針に反するため使わない。Markdown 表として構文的に妥当にするには見出し行が必要なので、
++            シートの先頭行をそのまま流用する）。
++          - `... (N rows × M cols total)` は `UsedRange` の合計行数・合計列数（クリップ前の値）を使い、
++            行・列のどちらか一方でも上限を超えていれば出す。
++          - `MaxRows`/`MaxCols` の下限（1 以上）は呼び出し元の Get-XlsOverview がパラメーター段階で
++            検証する。
++    #>
++    [CmdletBinding()]
++    param(
++        [Parameter(Mandatory = $true)]
++        $Worksheet,
++
++        [Parameter(Mandatory = $true)]
++        [int]$MaxRows,
++
++        [Parameter(Mandatory = $true)]
++        [int]$MaxCols
++    )
++
++    $lines = New-Object System.Collections.ArrayList
++    [void]$lines.Add("## $($Worksheet.Name)")
++    [void]$lines.Add('')
++
++    $usedRange = $Worksheet.UsedRange
++    $totalRows = [int]$usedRange.Rows.Count
++    $totalCols = [int]$usedRange.Columns.Count
++    $topRow = [int]$usedRange.Row
++    $topCol = [int]$usedRange.Column
++
++    if ($totalRows -eq 1 -and $totalCols -eq 1 -and [string]::IsNullOrEmpty([string]$usedRange.Text)) {
++        [void]$lines.Add('(empty)')
++        [void]$lines.Add('')
++        return ($lines.ToArray() -join "`n")
++    }
++
++    $clipRows = [Math]::Min($totalRows, $MaxRows)
++    $clipCols = [Math]::Min($totalCols, $MaxCols)
++
++    $grid = Get-XlsRangeTextGrid -Worksheet $Worksheet -TopRow $topRow -TopCol $topCol -RowCount $clipRows -ColCount $clipCols
++
++    $headerCells = New-Object System.Collections.ArrayList
++    foreach ($cellText in $grid[0]) {
++        [void]$headerCells.Add((ConvertTo-XlsMarkdownTableCell -Text $cellText))
++    }
++    [void]$lines.Add('| ' + ($headerCells.ToArray() -join ' | ') + ' |')
++
++    $sepCells = New-Object System.Collections.ArrayList
++    for ($c = 0; $c -lt $clipCols; $c++) {
++        [void]$sepCells.Add('---')
++    }
++    [void]$lines.Add('| ' + ($sepCells.ToArray() -join ' | ') + ' |')
++
++    for ($r = 1; $r -lt $grid.Count; $r++) {
++        $rowCells = New-Object System.Collections.ArrayList
++        foreach ($cellText in $grid[$r]) {
++            [void]$rowCells.Add((ConvertTo-XlsMarkdownTableCell -Text $cellText))
++        }
++        [void]$lines.Add('| ' + ($rowCells.ToArray() -join ' | ') + ' |')
++    }
++
++    if ($totalRows -gt $clipRows -or $totalCols -gt $clipCols) {
++        # `u{00D7}` Unicode エスケープは PowerShell 6.2+ の構文のため使わない（G-11）。
++        # [char]0x00D7（乗算記号 ×）をファイルの実バイト表現に依存せず明示的に組み立てる。
++        $timesSign = [char]0x00D7
++        [void]$lines.Add('')
++        [void]$lines.Add("... ($totalRows rows $timesSign $totalCols cols total)")
++    }
++
++    [void]$lines.Add('')
++    return ($lines.ToArray() -join "`n")
++}
++
+ function Get-XlsOverview {
+     <#
+     .SYNOPSIS
+@@ -620,13 +820,21 @@ function Get-XlsOverview {
+     .PARAMETER Path
+         対象ワークブックのパス。
+     .PARAMETER Sheet
+-        対象シート名（省略時は全シート）。
++        対象シート名（省略時は全シート、ワークブックのタブ順）。指定した場合は指定した順序・
++        指定したシートのみを出す。存在しないシート名があれば例外にする。
+     .PARAMETER MaxRows
+-        シートごとに表示する最大行数（既定 50）。
++        シートごとに表示する最大行数（既定 50）。1 未満は次の一手が分かる例外にする。
+     .PARAMETER MaxCols
+-        シートごとに表示する最大列数（既定 30）。
++        シートごとに表示する最大列数（既定 30）。1 未満は次の一手が分かる例外にする。
+     .EXAMPLE
+         Get-XlsOverview -Path 'C:\tmp\book.xlsx'
++    .EXAMPLE
++        Get-XlsOverview -Path 'C:\tmp\book.xlsx' -Sheet 'Summary', 'Data' -MaxRows 20 -MaxCols 10
++    .NOTES
++        内部で `Invoke-XlsSession -ReadOnly` を使う（呼び出し側は COM を見ない。G-06）。
++        `Range.Text`（表示文字列）ベースで座標を出さない。SKILL.md では「編集計画には使うな」と
++        書くこと（列幅が狭くて `#` などの表示になっているセルも、Excel が実際に表示している文字列を
++        そのまま出す。Format-XlsSheetOverviewMarkdown の実装メモ・Get-XlsRangeTextGrid の実装メモ参照）。
+     #>
+     [CmdletBinding()]
+     param(
+@@ -640,7 +848,40 @@ function Get-XlsOverview {
+         [int]$MaxCols = 30
+     )
+ 
+-    throw 'Get-XlsOverview は未実装です（T-07 で実装予定）。'
++    if ($MaxRows -lt 1) {
++        throw "MaxRows must be 1 or greater (got $MaxRows). Pass a positive row limit, e.g. -MaxRows 50."
++    }
++    if ($MaxCols -lt 1) {
++        throw "MaxCols must be 1 or greater (got $MaxCols). Pass a positive column limit, e.g. -MaxCols 30."
++    }
++
++    return Invoke-XlsSession -Path $Path -ReadOnly -ScriptBlock {
++        param($app, $wb)
++
++        $availableNames = @($wb.Worksheets | ForEach-Object { $_.Name })
++
++        $targetSheets = New-Object System.Collections.ArrayList
++        if ($Sheet) {
++            foreach ($name in $Sheet) {
++                if ($availableNames -notcontains $name) {
++                    throw "Sheet '$name' not found in '$Path'. Available sheets: $($availableNames -join ', ')."
++                }
++                [void]$targetSheets.Add($wb.Worksheets.Item($name))
++            }
++        }
++        else {
++            foreach ($ws in $wb.Worksheets) {
++                [void]$targetSheets.Add($ws)
++            }
++        }
++
++        $blocks = New-Object System.Collections.ArrayList
++        foreach ($ws in $targetSheets) {
++            [void]$blocks.Add((Format-XlsSheetOverviewMarkdown -Worksheet $ws -MaxRows $MaxRows -MaxCols $MaxCols))
++        }
++
++        return ($blocks.ToArray() -join "`n")
++    }
+ }
+ 
+ function Get-XlsModel {
+diff --git a/tests/Get-XlsOverview.Tests.ps1 b/tests/Get-XlsOverview.Tests.ps1
+new file mode 100644
+index 0000000..e7e19d3
+--- /dev/null
++++ b/tests/Get-XlsOverview.Tests.ps1
+@@ -0,0 +1,281 @@
++﻿#Requires -Version 5.1
++
++<#
++tests/Get-XlsOverview.Tests.ps1
++
++T-07: Get-XlsOverview（markitdown 相当のシート概観ダンプ。01-design.md §3.3）と、Markdown 生成に
++使う内部関数 ConvertTo-XlsMarkdownTableCell の受け入れテスト。
++harness/state/tasks/T-07.md の受け入れテスト要点:
++  - `## SheetName` 見出しが出る（複数シート、-Sheet フィルタ）。
++  - 上限: MaxRows/MaxCols を超えるデータで `... (N rows x M cols total)` の省略表記。
++  - 表示文字列: 日付セルが表示どおりの文字列で出る（Value2 の生シリアルではない）。
++  - 座標（A1 等）が出力に含まれない。
++  - 異常系: 存在しないシート名指定で次の一手が分かる例外。
++
++G-06: COM はすべて Invoke-XlsSession の ScriptBlock 内、または Invoke-XlsSession 自身の中でのみ触る。
++このテストファイルも例外ではない。テストフィクスチャ（セルへの書き込み）は T-09（Set-XlsRange）が
++まだ実装されていないため、Common.ps1 の New-XlsObjectArray2D / New-XlsSingleCellArray で作った
++[object[,]]（G-08）を ScriptBlock 内で直接 Range.Value2 に代入して用意する。
++
++純粋関数（ConvertTo-XlsMarkdownTableCell）は COM を一切使わないため、Get-XlsRange.Tests.ps1 と同じ
++`& $script:ModuleRef { ... }` パターンでモジュールスコープに入って直接テストする。
++#>
++
++$here = Split-Path -Parent $MyInvocation.MyCommand.Path
++. (Join-Path $here 'Common.ps1')
++
++$moduleName = 'XlsAgent'
++$modulePath = Join-Path $here '..\skill\scripts\XlsAgent.psm1'
++
++Describe 'Get-XlsOverview (T-07)' {
++
++    BeforeEach {
++        Import-Module $modulePath -Force
++        $script:ModuleRef = Get-Module $moduleName
++        $script:BaselinePids = Get-ExcelPids
++    }
++
++    AfterEach {
++        Assert-NoOrphanExcel -Baseline $script:BaselinePids
++        Remove-Module $moduleName -ErrorAction SilentlyContinue
++    }
++
++    AfterAll {
++        Remove-Module $moduleName -ErrorAction SilentlyContinue
++    }
++
++    Context 'ConvertTo-XlsMarkdownTableCell (pure function, no COM)' {
++
++        It 'renders $null and empty string as an empty cell' {
++            (& $script:ModuleRef { ConvertTo-XlsMarkdownTableCell -Text $null }) | Should Be ''
++            (& $script:ModuleRef { ConvertTo-XlsMarkdownTableCell -Text '' }) | Should Be ''
++        }
++
++        It 'escapes a pipe character so it does not break the table column separator' {
++            $result = & $script:ModuleRef { ConvertTo-XlsMarkdownTableCell -Text 'a|b' }
++            $result | Should Be 'a\|b'
++        }
++
++        It 'escapes a backslash before escaping pipes/newlines, so it is not double-escaped' {
++            $result = & $script:ModuleRef { ConvertTo-XlsMarkdownTableCell -Text 'a\b' }
++            $result | Should Be 'a\\b'
++        }
++
++        It 'replaces CRLF, CR-only, and LF-only line breaks with a literal \n so rows stay on one line' {
++            (& $script:ModuleRef { ConvertTo-XlsMarkdownTableCell -Text "a`r`nb" }) | Should Be 'a\nb'
++            (& $script:ModuleRef { ConvertTo-XlsMarkdownTableCell -Text "a`rb" }) | Should Be 'a\nb'
++            (& $script:ModuleRef { ConvertTo-XlsMarkdownTableCell -Text "a`nb" }) | Should Be 'a\nb'
++        }
++
++        It 'combines backslash, pipe, and newline escaping correctly in one value' {
++            $result = & $script:ModuleRef { ConvertTo-XlsMarkdownTableCell -Text "pipe|char`r`nnewline\back" }
++            $result | Should Be 'pipe\|char\nnewline\\back'
++        }
++    }
++
++    Context 'Get-XlsOverview integration (real Excel via Invoke-XlsSession)' {
++
++        It 'renders a sheet as a ## heading + Markdown table using display text (not raw Value2)' {
++            $path = New-TempXlsxPath
++            $expectedDate = [DateTime]::FromOADate(45000).ToString('yyyy-MM-dd')
++
++            Invoke-XlsSession -Path $path -ScriptBlock {
++                param($app, $wb)
++                $ws = $wb.Worksheets.Item(1)
++                $ws.Name = 'Data'
++                $ws.Range('A1:B3').Value2 = (New-XlsObjectArray2D -Rows @(
++                    @('Name', 'Score'),
++                    @('Alice', 10.0),
++                    @('Bob', 20.0)
++                ))
++                $ws.Range('A4').Value2 = (New-XlsSingleCellArray -Value 45000.0)
++                $ws.Range('A4').NumberFormat = 'yyyy-mm-dd'
++                Save-XlsWorkbook -Workbook $wb -Path $path
++            } | Out-Null
++
++            $out = Get-XlsOverview -Path $path
++
++            $out | Should Match ([regex]::Escape('## Data'))
++            $out | Should Match ([regex]::Escape('| Name | Score |'))
++            $out | Should Match ([regex]::Escape('| --- | --- |'))
++            $out | Should Match ([regex]::Escape('| Alice | 10 |'))
++            $out | Should Match ([regex]::Escape('| Bob | 20 |'))
++
++            # 表示文字列ベース: 日付は ISO 風の表示文字列であり、Value2 の生シリアル値 (45000) ではない。
++            $out | Should Match ([regex]::Escape($expectedDate))
++            $out | Should Not Match '45000'
++        }
++
++        It 'does not include any A1-style cell coordinates in the output' {
++            $path = New-TempXlsxPath
++
++            Invoke-XlsSession -Path $path -ScriptBlock {
++                param($app, $wb)
++                $ws = $wb.Worksheets.Item(1)
++                $ws.Name = 'Coords'
++                $ws.Range('A1:B2').Value2 = (New-XlsObjectArray2D -Rows @(
++                    @('Item', 'Qty'),
++                    @('Widget', 3.0)
++                ))
++                Save-XlsWorkbook -Workbook $wb -Path $path
++            } | Out-Null
++
++            $out = Get-XlsOverview -Path $path
++
++            # 見出し文字列自体（データ由来ではない部分）に A1 形式の座標が出ていないことを確認する。
++            $out | Should Not Match '\$[A-Z]{1,3}\$?\d+'
++        }
++
++        It 'appends the "... (N rows x M cols total)" note only when a limit is exceeded, using the actual overflow character' {
++            $path = New-TempXlsxPath
++            $timesSign = [char]0x00D7
++
++            Invoke-XlsSession -Path $path -ScriptBlock {
++                param($app, $wb)
++                $ws = $wb.Worksheets.Item(1)
++                $ws.Name = 'Wide'
++                $ws.Range('A1:D4').Value2 = (New-XlsObjectArray2D -Rows @(
++                    @('r1c1', 'r1c2', 'r1c3', 'r1c4'),
++                    @('r2c1', 'r2c2', 'r2c3', 'r2c4'),
++                    @('r3c1', 'r3c2', 'r3c3', 'r3c4'),
++                    @('r4c1', 'r4c2', 'r4c3', 'r4c4')
++                ))
++                Save-XlsWorkbook -Workbook $wb -Path $path
++            } | Out-Null
++
++            $clipped = Get-XlsOverview -Path $path -Sheet 'Wide' -MaxRows 2 -MaxCols 2
++            $expectedNote = "... (4 rows $timesSign 4 cols total)"
++            $clipped | Should Match ([regex]::Escape($expectedNote))
++            $clipped | Should Match ([regex]::Escape('| r1c1 | r1c2 |'))
++            $clipped | Should Not Match 'r3c1'
++            $clipped | Should Not Match 'r1c3'
++
++            $full = Get-XlsOverview -Path $path -Sheet 'Wide' -MaxRows 50 -MaxCols 30
++            $full | Should Not Match 'total\)'
++        }
++
++        It 'renders "(empty)" for a sheet whose UsedRange is a single blank cell' {
++            $path = New-TempXlsxPath
++
++            Invoke-XlsSession -Path $path -ScriptBlock {
++                param($app, $wb)
++                $ws1 = $wb.Worksheets.Item(1)
++                $ws1.Name = 'HasData'
++                $ws1.Range('A1').Value2 = (New-XlsSingleCellArray -Value 'x')
++
++                $ws2 = $wb.Worksheets.Add()
++                $ws2.Name = 'Blank'
++
++                Save-XlsWorkbook -Workbook $wb -Path $path
++            } | Out-Null
++
++            $out = Get-XlsOverview -Path $path -Sheet 'Blank'
++            $out | Should Match ([regex]::Escape('## Blank'))
++            $out | Should Match '\(empty\)'
++        }
++
++        It '-Sheet filters to the requested sheets and preserves the requested order' {
++            $path = New-TempXlsxPath
++
++            Invoke-XlsSession -Path $path -ScriptBlock {
++                param($app, $wb)
++                $ws1 = $wb.Worksheets.Item(1)
++                $ws1.Name = 'Data'
++                $ws1.Range('A1').Value2 = (New-XlsSingleCellArray -Value 'd')
++
++                $ws2 = $wb.Worksheets.Add()
++                $ws2.Name = 'Summary'
++                $ws2.Range('A1').Value2 = (New-XlsSingleCellArray -Value 's')
++
++                $ws3 = $wb.Worksheets.Add()
++                $ws3.Name = 'Extra'
++                $ws3.Range('A1').Value2 = (New-XlsSingleCellArray -Value 'e')
++
++                Save-XlsWorkbook -Workbook $wb -Path $path
++            } | Out-Null
++
++            $out = Get-XlsOverview -Path $path -Sheet 'Data', 'Summary'
++
++            $out | Should Match ([regex]::Escape('## Data'))
++            $out | Should Match ([regex]::Escape('## Summary'))
++            $out | Should Not Match ([regex]::Escape('## Extra'))
++
++            $indexData = $out.IndexOf('## Data')
++            $indexSummary = $out.IndexOf('## Summary')
++            ($indexData -lt $indexSummary) | Should Be $true
++        }
++
++        It 'omits -Sheet to include every worksheet' {
++            $path = New-TempXlsxPath
++
++            Invoke-XlsSession -Path $path -ScriptBlock {
++                param($app, $wb)
++                $ws1 = $wb.Worksheets.Item(1)
++                $ws1.Name = 'One'
++                $ws1.Range('A1').Value2 = (New-XlsSingleCellArray -Value 1.0)
++
++                $ws2 = $wb.Worksheets.Add()
++                $ws2.Name = 'Two'
++                $ws2.Range('A1').Value2 = (New-XlsSingleCellArray -Value 2.0)
++
++                Save-XlsWorkbook -Workbook $wb -Path $path
++            } | Out-Null
++
++            $out = Get-XlsOverview -Path $path
++            $out | Should Match ([regex]::Escape('## One'))
++            $out | Should Match ([regex]::Escape('## Two'))
++        }
++
++        It 'throws a next-step error listing available sheets for a nonexistent sheet name' {
++            $path = New-TempXlsxPath
++
++            Invoke-XlsSession -Path $path -ScriptBlock {
++                param($app, $wb)
++                $ws = $wb.Worksheets.Item(1)
++                $ws.Name = 'RealSheet'
++                Save-XlsWorkbook -Workbook $wb -Path $path
++            } | Out-Null
++
++            $errorSeen = $null
++            try {
++                Get-XlsOverview -Path $path -Sheet 'DoesNotExist'
++            }
++            catch {
++                $errorSeen = $_
++            }
++
++            $errorSeen | Should Not Be $null
++            $errorSeen.Exception.Message | Should Match 'not found'
++            $errorSeen.Exception.Message | Should Match ([regex]::Escape("'DoesNotExist'"))
++            $errorSeen.Exception.Message | Should Match ([regex]::Escape('RealSheet'))
++        }
++
++        It 'throws a next-step error for MaxRows or MaxCols less than 1 without opening Excel' {
++            $path = New-TempXlsxPath
++            $script:BaselinePidsLocal = Get-ExcelPids
++
++            $errorSeen = $null
++            try {
++                Get-XlsOverview -Path $path -MaxRows 0
++            }
++            catch {
++                $errorSeen = $_
++            }
++            $errorSeen | Should Not Be $null
++            $errorSeen.Exception.Message | Should Match 'MaxRows'
++
++            $errorSeen2 = $null
++            try {
++                Get-XlsOverview -Path $path -MaxCols -1
++            }
++            catch {
++                $errorSeen2 = $_
++            }
++            $errorSeen2 | Should Not Be $null
++            $errorSeen2.Exception.Message | Should Match 'MaxCols'
++
++            # ファイルが存在しない状態でも、パラメーター検証で弾かれ Excel は一切起動しないはず。
++            Assert-NoOrphanExcel -Baseline $script:BaselinePidsLocal
++        }
++    }
++}
+diff --git a/tests/T01.Tests.ps1 b/tests/T01.Tests.ps1
+index 5dce636..78caff3 100644
+--- a/tests/T01.Tests.ps1
++++ b/tests/T01.Tests.ps1
+@@ -91,7 +91,9 @@ Describe 'XlsAgent module skeleton (T-01)' {
+         # ループに残しても偶然パスしてしまう。実装済みという事実を明示するため除外する）。
+         # T-06: Get-XlsRange 実装済み（無効な範囲アドレスの throw は残っているため、このループに
+         # 残しても偶然パスしてしまう。実装済みという事実を明示するため除外する）。
+-        $_ -notin @('Invoke-XlsSession', 'Save-XlsWorkbook', 'Clear-XlsOrphans', 'Get-XlsRange')
++        # T-07: Get-XlsOverview 実装済み（存在しないシート名・MaxRows/MaxCols 検証の throw が残って
++        # いるため、このループに残しても偶然パスしてしまう。実装済みという事実を明示するため除外する）。
++        $_ -notin @('Invoke-XlsSession', 'Save-XlsWorkbook', 'Clear-XlsOrphans', 'Get-XlsRange', 'Get-XlsOverview')
+     }
+ 
+     foreach ($fn in $script:StillStubFunctions) {

@@ -10,8 +10,8 @@
 | T-04 | Save-XlsWorkbook | done | r2 | 2026-08-17 |
 | T-05 | Clear-XlsOrphans | done | r2 | 2026-08-17 |
 | T-06 | Get-XlsRange | done | r4 | 2026-08-17 |
-| T-07 | Get-XlsOverview | impl | r1 | 2026-08-17 |
-| T-08 | Get-XlsModel | todo | - | |
+| T-07 | Get-XlsOverview | done | r1 | 2026-08-17 |
+| T-08 | Get-XlsModel | impl | r1 | 2026-08-17 |
 | T-09 | Set-XlsRange | todo | - | |
 | T-10 | Test-XlsFormulas 関数 | todo | - | |
 | T-11 | 外部リンク refused / -Force | todo | - | |

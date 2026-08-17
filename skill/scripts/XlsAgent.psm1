@@ -613,6 +613,206 @@ function Save-XlsWorkbook {
     }
 }
 
+function ConvertTo-XlsMarkdownTableCell {
+    <#
+    .SYNOPSIS
+        1 セル分の表示文字列（Range.Text）を Markdown 表のセルとして安全に埋め込める形にエスケープする。
+        COM は触らない純粋関数。Format-XlsSheetOverviewMarkdown の内部ヘルパー（T-07）。Export しない。
+    .PARAMETER Text
+        エスケープ対象の表示文字列（$null/空文字列も許容し、空セルとして扱う）。
+    .EXAMPLE
+        ConvertTo-XlsMarkdownTableCell -Text "a|b`nc"
+    .NOTES
+        実装判断（T-07、仕様に明記がないため記録）:
+          1. バックスラッシュを先に `\\` へエスケープする（後続のエスケープが挿入する `\` 自身を
+             二重エスケープしないよう、必ず最初に行う）。
+          2. パイプ `|` を `\|` へエスケープする（Markdown 表の列区切りと衝突させないため）。
+          3. 改行（CRLF/CR/LF いずれも）は表の行区切りと衝突する（Markdown の 1 行 1 レコード構造が
+             壊れる）ため、リテラルの 2 文字 `\n`（バックスラッシュ + n）に置き換える。実際の改行文字
+             ではなく可視化されたエスケープ表記にすることで、セル内改行があったという情報を失わずに
+             1 行に収める。
+        往復変換（エスケープを戻す）はサポート対象外（Get-XlsOverview は概観表示専用で「編集計画には
+        使うな」という設計方針のため、逆変換ができる必要はない）。
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$Text
+    )
+
+    if ([string]::IsNullOrEmpty($Text)) {
+        return ''
+    }
+
+    $escaped = $Text -replace '\\', '\\'
+    $escaped = $escaped -replace '\|', '\|'
+    $escaped = $escaped -replace "`r`n", '\n'
+    $escaped = $escaped -replace "`r", '\n'
+    $escaped = $escaped -replace "`n", '\n'
+    return $escaped
+}
+
+function Get-XlsRangeTextGrid {
+    <#
+    .SYNOPSIS
+        指定した左上セルからの矩形範囲を、セル単位の Range.Text（表示文字列）でジャグ配列（行の配列の
+        配列）として読み取る。Format-XlsSheetOverviewMarkdown の内部ヘルパー（T-07）。
+        COM は Worksheet/Range オブジェクトのプロパティ読み取りのみ（Invoke-XlsSession の ScriptBlock
+        内から呼ばれる前提。G-06）。Export しない。
+    .PARAMETER Worksheet
+        対象の Worksheet COM オブジェクト。
+    .PARAMETER TopRow
+        読み取る矩形の左上行（1-based）。
+    .PARAMETER TopCol
+        読み取る矩形の左上列（1-based）。
+    .PARAMETER RowCount
+        読み取る行数。
+    .PARAMETER ColCount
+        読み取る列数。
+    .EXAMPLE
+        Get-XlsRangeTextGrid -Worksheet $ws -TopRow 1 -TopCol 1 -RowCount 10 -ColCount 5
+    .NOTES
+        罠（T-07 実機確認、実装メモ参照）: `Range.Text` は複数セルの範囲に対しても例外を投げない。
+        しかし `Range.NumberFormat`（T-06 の罠と同種）と同じく「範囲内のすべてのセルの表示文字列が
+        完全に同一なら」その文字列 1 個をスカラーで返し、1 つでも異なれば `[DBNull]::Value` を返す
+        （実機確認: 値の異なる 2x2 範囲で `System.DBNull` が返った）。つまり複数セルの表示文字列を
+        一括取得する経路は存在せず、01-design.md §3.3 の「Range.Text（表示文字列）ベース」を満たすには
+        セル単位で読むしかない（T-06 の Get-XlsRange が Value2 は一括、NumberFormat だけセル単位
+        フォールバックするのとは違い、Get-XlsOverview は Text 自体が実質的に常にセル単位になる）。
+        呼び出し元の Format-XlsSheetOverviewMarkdown が MaxRows/MaxCols でクリップした後の小さい範囲
+        だけをこの関数に渡すことで、COM 呼び出し回数を既定 50×30=1500 回程度に抑えている（タスクカード
+        T-07 の実装判断: 一括 Value2+NumberFormat での近似はせず、クリップ後のみセル単位 Text を許容）。
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        $Worksheet,
+
+        [Parameter(Mandatory = $true)]
+        [int]$TopRow,
+
+        [Parameter(Mandatory = $true)]
+        [int]$TopCol,
+
+        [Parameter(Mandatory = $true)]
+        [int]$RowCount,
+
+        [Parameter(Mandatory = $true)]
+        [int]$ColCount
+    )
+
+    $rows = New-Object System.Collections.ArrayList
+    for ($r = 0; $r -lt $RowCount; $r++) {
+        $row = New-Object System.Collections.ArrayList
+        for ($c = 0; $c -lt $ColCount; $c++) {
+            $cell = $Worksheet.Cells.Item($TopRow + $r, $TopCol + $c)
+            [void]$row.Add([string]$cell.Text)
+        }
+        [void]$rows.Add($row.ToArray())
+    }
+
+    return , $rows.ToArray()
+}
+
+function Format-XlsSheetOverviewMarkdown {
+    <#
+    .SYNOPSIS
+        1 シート分の `## SheetName` 見出し + Markdown 表を組み立てる。座標（A1 等）は出さない。
+        Format-XlsSheetOverviewMarkdown の呼び出し元は Get-XlsOverview（T-07）。
+        COM は Worksheet.UsedRange と（Get-XlsRangeTextGrid 経由の）Cells.Item(...).Text の読み取りのみ
+        （Invoke-XlsSession の ScriptBlock 内から呼ばれる前提。G-06）。Export しない。
+    .PARAMETER Worksheet
+        対象の Worksheet COM オブジェクト。
+    .PARAMETER MaxRows
+        表示する最大行数。
+    .PARAMETER MaxCols
+        表示する最大列数。
+    .EXAMPLE
+        Format-XlsSheetOverviewMarkdown -Worksheet $ws -MaxRows 50 -MaxCols 30
+    .NOTES
+        実装判断（T-07、仕様に明記がないため記録）:
+          - 空シートの扱い: `UsedRange` が 1x1 かつその唯一のセルの `Text` が空文字列の場合だけ
+            「空シート」とみなし `(empty)` を出す。真に空白のシートでは `UsedRange` が既定で `$A$1`
+            （1x1、Value2=$null）になることを実機で確認済み（実装メモ参照）。単一セルにのみ実データが
+            あるシート（例: A1 だけに "X"）はこの条件に当たらないため、通常どおり 1 行の表として出す
+            （"X" というヘッダー行のみ、データ行なしの表になる）。数式が空文字列 "" を返す単一セルの
+            シートは表示文字列が空になるため「空シート」に分類されるが、仕様に明記がない縮退ケースで
+            あり実装判断として許容する。
+          - ヘッダー行の扱い: クリップ後の範囲の 1 行目をそのまま Markdown 表の見出し行として使う
+            （実際にヘッダーかどうかは問わない。座標由来の列名（A, B, C...）は「座標を出さない」という
+            設計方針に反するため使わない。Markdown 表として構文的に妥当にするには見出し行が必要なので、
+            シートの先頭行をそのまま流用する）。
+          - `... (N rows × M cols total)` は `UsedRange` の合計行数・合計列数（クリップ前の値）を使い、
+            行・列のどちらか一方でも上限を超えていれば出す。
+          - `MaxRows`/`MaxCols` の下限（1 以上）は呼び出し元の Get-XlsOverview がパラメーター段階で
+            検証する。
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        $Worksheet,
+
+        [Parameter(Mandatory = $true)]
+        [int]$MaxRows,
+
+        [Parameter(Mandatory = $true)]
+        [int]$MaxCols
+    )
+
+    $lines = New-Object System.Collections.ArrayList
+    [void]$lines.Add("## $($Worksheet.Name)")
+    [void]$lines.Add('')
+
+    $usedRange = $Worksheet.UsedRange
+    $totalRows = [int]$usedRange.Rows.Count
+    $totalCols = [int]$usedRange.Columns.Count
+    $topRow = [int]$usedRange.Row
+    $topCol = [int]$usedRange.Column
+
+    if ($totalRows -eq 1 -and $totalCols -eq 1 -and [string]::IsNullOrEmpty([string]$usedRange.Text)) {
+        [void]$lines.Add('(empty)')
+        [void]$lines.Add('')
+        return ($lines.ToArray() -join "`n")
+    }
+
+    $clipRows = [Math]::Min($totalRows, $MaxRows)
+    $clipCols = [Math]::Min($totalCols, $MaxCols)
+
+    $grid = Get-XlsRangeTextGrid -Worksheet $Worksheet -TopRow $topRow -TopCol $topCol -RowCount $clipRows -ColCount $clipCols
+
+    $headerCells = New-Object System.Collections.ArrayList
+    foreach ($cellText in $grid[0]) {
+        [void]$headerCells.Add((ConvertTo-XlsMarkdownTableCell -Text $cellText))
+    }
+    [void]$lines.Add('| ' + ($headerCells.ToArray() -join ' | ') + ' |')
+
+    $sepCells = New-Object System.Collections.ArrayList
+    for ($c = 0; $c -lt $clipCols; $c++) {
+        [void]$sepCells.Add('---')
+    }
+    [void]$lines.Add('| ' + ($sepCells.ToArray() -join ' | ') + ' |')
+
+    for ($r = 1; $r -lt $grid.Count; $r++) {
+        $rowCells = New-Object System.Collections.ArrayList
+        foreach ($cellText in $grid[$r]) {
+            [void]$rowCells.Add((ConvertTo-XlsMarkdownTableCell -Text $cellText))
+        }
+        [void]$lines.Add('| ' + ($rowCells.ToArray() -join ' | ') + ' |')
+    }
+
+    if ($totalRows -gt $clipRows -or $totalCols -gt $clipCols) {
+        # `u{00D7}` Unicode エスケープは PowerShell 6.2+ の構文のため使わない（G-11）。
+        # [char]0x00D7（乗算記号 ×）をファイルの実バイト表現に依存せず明示的に組み立てる。
+        $timesSign = [char]0x00D7
+        [void]$lines.Add('')
+        [void]$lines.Add("... ($totalRows rows $timesSign $totalCols cols total)")
+    }
+
+    [void]$lines.Add('')
+    return ($lines.ToArray() -join "`n")
+}
+
 function Get-XlsOverview {
     <#
     .SYNOPSIS
@@ -620,13 +820,21 @@ function Get-XlsOverview {
     .PARAMETER Path
         対象ワークブックのパス。
     .PARAMETER Sheet
-        対象シート名（省略時は全シート）。
+        対象シート名（省略時は全シート、ワークブックのタブ順）。指定した場合は指定した順序・
+        指定したシートのみを出す。存在しないシート名があれば例外にする。
     .PARAMETER MaxRows
-        シートごとに表示する最大行数（既定 50）。
+        シートごとに表示する最大行数（既定 50）。1 未満は次の一手が分かる例外にする。
     .PARAMETER MaxCols
-        シートごとに表示する最大列数（既定 30）。
+        シートごとに表示する最大列数（既定 30）。1 未満は次の一手が分かる例外にする。
     .EXAMPLE
         Get-XlsOverview -Path 'C:\tmp\book.xlsx'
+    .EXAMPLE
+        Get-XlsOverview -Path 'C:\tmp\book.xlsx' -Sheet 'Summary', 'Data' -MaxRows 20 -MaxCols 10
+    .NOTES
+        内部で `Invoke-XlsSession -ReadOnly` を使う（呼び出し側は COM を見ない。G-06）。
+        `Range.Text`（表示文字列）ベースで座標を出さない。SKILL.md では「編集計画には使うな」と
+        書くこと（列幅が狭くて `#` などの表示になっているセルも、Excel が実際に表示している文字列を
+        そのまま出す。Format-XlsSheetOverviewMarkdown の実装メモ・Get-XlsRangeTextGrid の実装メモ参照）。
     #>
     [CmdletBinding()]
     param(
@@ -640,7 +848,40 @@ function Get-XlsOverview {
         [int]$MaxCols = 30
     )
 
-    throw 'Get-XlsOverview は未実装です（T-07 で実装予定）。'
+    if ($MaxRows -lt 1) {
+        throw "MaxRows must be 1 or greater (got $MaxRows). Pass a positive row limit, e.g. -MaxRows 50."
+    }
+    if ($MaxCols -lt 1) {
+        throw "MaxCols must be 1 or greater (got $MaxCols). Pass a positive column limit, e.g. -MaxCols 30."
+    }
+
+    return Invoke-XlsSession -Path $Path -ReadOnly -ScriptBlock {
+        param($app, $wb)
+
+        $availableNames = @($wb.Worksheets | ForEach-Object { $_.Name })
+
+        $targetSheets = New-Object System.Collections.ArrayList
+        if ($Sheet) {
+            foreach ($name in $Sheet) {
+                if ($availableNames -notcontains $name) {
+                    throw "Sheet '$name' not found in '$Path'. Available sheets: $($availableNames -join ', ')."
+                }
+                [void]$targetSheets.Add($wb.Worksheets.Item($name))
+            }
+        }
+        else {
+            foreach ($ws in $wb.Worksheets) {
+                [void]$targetSheets.Add($ws)
+            }
+        }
+
+        $blocks = New-Object System.Collections.ArrayList
+        foreach ($ws in $targetSheets) {
+            [void]$blocks.Add((Format-XlsSheetOverviewMarkdown -Worksheet $ws -MaxRows $MaxRows -MaxCols $MaxCols))
+        }
+
+        return ($blocks.ToArray() -join "`n")
+    }
 }
 
 function Get-XlsModel {

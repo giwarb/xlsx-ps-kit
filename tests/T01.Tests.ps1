@@ -91,7 +91,9 @@ Describe 'XlsAgent module skeleton (T-01)' {
         # ループに残しても偶然パスしてしまう。実装済みという事実を明示するため除外する）。
         # T-06: Get-XlsRange 実装済み（無効な範囲アドレスの throw は残っているため、このループに
         # 残しても偶然パスしてしまう。実装済みという事実を明示するため除外する）。
-        $_ -notin @('Invoke-XlsSession', 'Save-XlsWorkbook', 'Clear-XlsOrphans', 'Get-XlsRange')
+        # T-07: Get-XlsOverview 実装済み（存在しないシート名・MaxRows/MaxCols 検証の throw が残って
+        # いるため、このループに残しても偶然パスしてしまう。実装済みという事実を明示するため除外する）。
+        $_ -notin @('Invoke-XlsSession', 'Save-XlsWorkbook', 'Clear-XlsOrphans', 'Get-XlsRange', 'Get-XlsOverview')
     }
 
     foreach ($fn in $script:StillStubFunctions) {
