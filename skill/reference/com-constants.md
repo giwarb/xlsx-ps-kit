@@ -9,12 +9,12 @@
 | xlCellTypeFormulas | -4123 | SpecialCells | |
 | xlErrors | 16 | SpecialCells 第 2 引数 | |
 | xlCalculationManual | -4135 | Application.Calculation | 2026-08-17（T-03 Invoke-XlsSession、実機） |
-| xlCalculationAutomatic | -4105 | Application.Calculation | |
-| xlOpenXMLWorkbook | 51 | SaveAs .xlsx | |
-| xlOpenXMLWorkbookMacroEnabled | 52 | SaveAs .xlsm | |
-| xlOpenXMLTemplateMacroEnabled | 53 | SaveAs .xltm | |
-| xlOpenXMLTemplate | 54 | SaveAs .xltx | |
-| xlCSV | 6 | SaveAs .csv | |
+| xlCalculationAutomatic | -4105 | Application.Calculation | 2026-08-17（T-04 Save-XlsWorkbook、実機。Automatic のまま保存すると xl/workbook.xml の calcPr から calcMode 属性が省略されることまで確認） |
+| xlOpenXMLWorkbook | 51 | SaveAs .xlsx | 2026-08-17（T-04 Save-XlsWorkbook、実機。SaveAs 直後の Workbook.FileFormat で確認） |
+| xlOpenXMLWorkbookMacroEnabled | 52 | SaveAs .xlsm | 2026-08-17（T-04 Save-XlsWorkbook、実機。SaveAs 直後・再オープン後とも FileFormat=52 を確認） |
+| xlOpenXMLTemplateMacroEnabled | 53 | SaveAs .xltm | 2026-08-17（T-04 Save-XlsWorkbook、実機。SaveAs 直後の Workbook.FileFormat で確認） |
+| xlOpenXMLTemplate | 54 | SaveAs .xltx | 2026-08-17（T-04 Save-XlsWorkbook、実機。SaveAs 直後の Workbook.FileFormat で確認。Workbooks.Open で開き直すとテンプレートから新規ブックが生成されるため、reopen では確認できない罠あり） |
+| xlCSV | 6 | SaveAs .csv | 2026-08-17（T-04 Save-XlsWorkbook、実機。SaveAs 直後の Workbook.FileFormat とファイル内容で確認） |
 | xlExcelLinks | 1 | LinkSources | |
 | xlSrcRange | 1 | ListObjects.Add | |
 | xlYes | 1 | ListObjects.Add HasHeaders | |

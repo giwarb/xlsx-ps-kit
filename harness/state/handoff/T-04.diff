@@ -1,0 +1,972 @@
+diff --git a/harness/state/board.md b/harness/state/board.md
+index 36cbdf4..944c9b9 100644
+--- a/harness/state/board.md
++++ b/harness/state/board.md
+@@ -7,7 +7,7 @@
+ | T-01 | モジュール骨組み・Pester 3.4 確認 | done | r2 | 2026-08-17 |
+ | T-02 | Excel 起動終了スモーク・残骸ゼロ検証 | done | r2 | 2026-08-17 |
+ | T-03 | Invoke-XlsSession | done | r3 | 2026-08-17 |
+-| T-04 | Save-XlsWorkbook | impl | r1 | 2026-08-17 |
++| T-04 | Save-XlsWorkbook | review | r2 | 2026-08-17 |
+ | T-05 | Clear-XlsOrphans | todo | - | |
+ | T-06 | Get-XlsRange | todo | - | |
+ | T-07 | Get-XlsOverview | todo | - | |
+diff --git a/harness/state/handoff/T-04.diff b/harness/state/handoff/T-04.diff
+new file mode 100644
+index 0000000..e69de29
+diff --git a/harness/state/reviews/T-04.md b/harness/state/reviews/T-04.md
+new file mode 100644
+index 0000000..25c3eb3
+--- /dev/null
++++ b/harness/state/reviews/T-04.md
+@@ -0,0 +1,110 @@
++# Review T-04 (round 1)
++
++## 判定: fix
++
++## テスト実行
++- コマンド: 実行不可。ローカルコマンドの起動前に `codex-windows-sandbox-setup.exe` が見つからず、PowerShell を開始できなかった。
++- 結果: 独立実行なし。差分・実ファイルのコード読解で代替した。実装メモには対象テスト passed 14 / failed 0、全回帰 passed 36 / failed 0 とあるが、レビュアー側では未確認。
++- EXCEL.EXE 差分: 未取得
++
++## チェックリスト
++| # | 項目 | ○/×/- | メモ |
++|---|---|---|---|
++| C-1 | 関数シグネチャが設計と一致 | ○ | `-Workbook <obj> -Path <string>`。拡張子対応と、同一パスなら `Save`、それ以外なら `SaveAs` の分岐も §3.2 と一致。 |
++| C-2 | 戻り値の形が設計と一致 | - | 戻り値契約なし。 |
++| C-3 | `Test-XlsFormulas` の JSON 契約 | - | 対象外。 |
++| C-4 | exit code 契約 | - | 対象外。 |
++| C-5 | §0 の確定事項を変更していない | ○ | 製品コードは Excel COM を使用。OOXML 読み取りは保存状態を検証するテスト限定。 |
++| C-6 | タスクカードの範囲外を触っていない | ○ | T01 の変更は、実装済み関数をスタブ検査から除外するために必要な回帰修正。 |
++| S-1 | `GetActiveObject` を使っていない | ○ | 使用なし。 |
++| S-2 | COM が `Invoke-XlsSession` 外に漏れていない | ○ | テストの COM 操作はすべて ScriptBlock 内。 |
++| S-3 | `finally` で Close→Quit→Release→GC×2 | ○ | 既存の `Invoke-XlsSession` 後始末経路を維持。 |
++| S-4 | ScriptBlock 内の例外でもプロセスが残らない | ○ | 既存の `Invoke-XlsSession` の `finally` で保証。ただし独立実行はできていない。 |
++| S-5 | `Value2` を使い、`Value`/`Text` を数値取得に使わない | ○ | 読み取りは `Value2`。 |
++| S-6 | 2次元代入が `[object[,]]` | × | 新規テストに scalar の `Range.Value2` 代入が5箇所あり、G-08 に反する。 |
++| S-7 | `SpecialCells` のヒットなし例外を処理 | - | 対象外。 |
++| S-8 | `DisplayAlerts=$false` 中に `Close(true)` しない | ○ | `Save`/`SaveAs` のみ。Close は既存経路で `$false`。 |
++| S-9 | Excel 全殺しがない | ○ | なし。 |
++| S-10 | ReadOnly 検出・STA 検査 | - | T-03 のみ。 |
++| P-1 | `#Requires -Version 5.1` | ○ | モジュール・テストともあり。 |
++| P-2 | PowerShell 7 専用構文なし | ○ | `-notin` を含め5.1で使用可能な構文。 |
++| P-3 | ファイルI/OにUTF-8を明示 | × | `StreamReader($stream)` のエンコーディングが明示されていない。 |
++| P-4 | Pester 3.4 互換構文 | ○ | `Should Be` 形式で、v5専用構文なし。 |
++| T-1 | Pester が緑 | - | サンドボックス環境不備により独立実行できず。 |
++| T-2 | `AfterEach` に `Assert-NoOrphanExcel` | ○ | あり。 |
++| T-3 | 実 Excel を起動する | ○ | 統合テストは `Invoke-XlsSession` を使用し、モックなし。 |
++| T-4 | 受け入れ要点が全部テストにある | ○ | Automatic の焼き込みと再計算を検証。.xlsm はタスクカードで許容された1段目を実施。fixture 不在時に Trust Center を変更しない判断は妥当だが、実マクロ維持は将来の fixture 追加まで未検証。 |
++| T-5 | 異常系が最低1つある | × | 未対応拡張子の純粋関数テストはあるが、COM の `Save`/`SaveAs` 失敗と状態復元は未検証。 |
++| Q-1 | コメントベースヘルプがある | ○ | 公開関数と内部ヘルパーにあり。 |
++| Q-2 | エラーメッセージが次の一手を示す | × | 未対応拡張子は良好だが、`Save`/`SaveAs` の COM 例外は生の HRESULT のまま伝播する。 |
++| Q-3 | COM 定数を集約し文書へ追記 | ○ | `$script:Xl` と `com-constants.md` に対応値・実測記録あり。 |
++| Q-4 | 実装メモに COM の罠がある | ○ | Calculation、テンプレート再オープン、HasVBProject 等が具体的。 |
++| Q-5 | 自己チェックの○が事実と一致 | × | G-08 は単一セルを例外としていないため、自己チェックの○は誤り。G-15 は独立確認不能。 |
++
++## 指摘
++
++### [blocking] 単一セルへの scalar `Value2` 代入も G-08 違反
++- 場所: `tests/Save-XlsWorkbook.Tests.ps1:196,214,219,290,295`、`harness/state/tasks/T-04.md:142`
++- 内容: G-08 は「`Range.Value2` への代入は `[object[,]]` のみ」としており、単一セルの例外は定めていない。新規テストは文字列・数値を直接代入しているため、自己チェックの○と一致しない。
++- 修正案:
++
++```powershell
++[object[,]]$cellData = [Array]::CreateInstance([object], 1, 1)
++$cellData[0, 0] = $marker
++$ws.Range('A1').Value2 = $cellData
++```
++
++同じ形で `'first'`、`'second'`、`10`、`99` の代入も `[object[,]]` にする。
++
++### [should-fix] Automatic 切替から状態復元までを同じ try/finally に入れる
++- 場所: `skill/scripts/XlsAgent.psm1:513-533`、`tests/Save-XlsWorkbook.Tests.ps1:282`
++- 内容: 保存後に Manual へ戻す設計判断自体は妥当で、Automatic がファイルへ焼き込まれた後にライブセッションだけ Manual へ戻しても受け入れ条件を損なわない。ただし `Set-XlsCalculationAutomatic` とパス判定が `try` の外にあるため、`CalculateFullRebuild()` や COM プロパティ取得が例外になると Manual へ戻らない。また、`Save`/`SaveAs` の失敗は生の COM エラーになり、S-04を満たさない。
++- 修正案:
++
++```powershell
++$app = $Workbook.Application
++
++try {
++    Set-XlsCalculationAutomatic -Application $app
++
++    $currentFullName = $null
++    if ($Workbook.Path) {
++        $currentFullName = $Workbook.FullName
++    }
++
++    $sameFile = Test-XlsSamePath -PathA $currentFullName -PathB $Path
++    if ($sameFile) {
++        $Workbook.Save()
++    }
++    else {
++        $targetFullName = (New-Object IO.FileInfo($Path)).FullName
++        $Workbook.SaveAs($targetFullName, $fileFormat)
++    }
++}
++catch {
++    throw "Failed to recalculate or save workbook to '$Path'. Check the parent directory, permissions, file locks, and extension. Excel reported: $($_.Exception.Message)"
++}
++finally {
++    $app.Calculation = $script:Xl.xlCalculationManual
++}
++```
++
++存在しない親ディレクトリ等で `SaveAs` を失敗させ、エラーが行動可能な内容であることと、catch 後の `$app.Calculation` が Manual であることもテストする。
++
++### [should-fix] OOXML テストの文字エンコーディングを明示する
++- 場所: `tests/Save-XlsWorkbook.Tests.ps1:85`
++- 内容: `StreamReader($stream)` は実質UTF-8既定だが、S-01/P-3はファイルI/Oのエンコーディング明示を求めている。
++- 修正案:
++
++```powershell
++$reader = New-Object -TypeName System.IO.StreamReader `
++    -ArgumentList @($stream, [Text.Encoding]::UTF8, $true)
++```
++
++## 良かった点（1〜2 行、次のタスクでも続けてほしいこと）
++
++拡張子対応、Save/SaveAs 分岐、T01 のスタブ除外はいずれも設計とタスク進行に合っている。Calculation のファイル状態とライブ状態を分離した判断、および Trust Center を変更せず .xlsm の1段目だけに留めた判断も、制約と未検証範囲が明記されていて妥当。
++
++## SKILL.md gotchas 候補（実装メモに書かれていないが気づいた罠があれば）
++
++なし。今回確認できた Calculation、テンプレート、HasVBProject 関連の罠は実装メモに記録済み。
+\ No newline at end of file
+diff --git a/harness/state/tasks/T-04.md b/harness/state/tasks/T-04.md
+index 0fbe957..d589dd2 100644
+--- a/harness/state/tasks/T-04.md
++++ b/harness/state/tasks/T-04.md
+@@ -38,14 +38,163 @@
+ 
+ ## 実装メモ(Sonnet が記入)
+ 
++### 環境について
++今回の実装環境では実 Excel（Microsoft Office）が動作し、`Invoke-Pester` を実際に自分で実行して
++緑を確認できた（T-03 のレビューではサンドボックス制約により実行できなかった旨が記録されている）。
++以下の確認事項はすべて本セッションで実機実行して得たもの。
++
++### 実装した関数
++- `Get-XlsSaveFileFormat -Path <string>`（内部ヘルパー、非公開）: 拡張子 → FileFormat の純粋関数（COM なし）。
++- `Test-XlsSamePath -PathA <string> -PathB <string>`（内部ヘルパー、非公開）: `[IO.FileInfo].FullName` を
++  `OrdinalIgnoreCase` で比較する純粋関数（COM なし）。Save-XlsWorkbook 側で `$Workbook.Path`/`$Workbook.FullName`
++  を読んで文字列化してから渡す形にし、COM プロパティ読み取りとパス比較ロジックを分離した。これにより
++  パス比較ロジックだけを COM なしで単体テストできる（G-06 を保ったまま単体テスト可能性を確保）。
++- `Set-XlsCalculationAutomatic -Application <obj>`(内部ヘルパー、非公開): `Application.Calculation` を
++  Automatic に戻し `CalculateFullRebuild()` を呼ぶ。T-10 の Test-XlsFormulas と共有する想定（タスクカード指示どおり切り出した）。
++- `Save-XlsWorkbook -Workbook <obj> -Path <string>`: 上記ヘルパーを組み合わせて実装。
++  同一パス判定は `Test-XlsSamePath -PathA $Workbook.FullName -PathB $Path`（`$Workbook.Path` が
++  空文字列＝未保存workbookの場合は PathA を渡さず必ず SaveAs 側に倒す）。
++
++### 踏んだ COM の罠(実機確認)
++1. **Application.Calculation は保存の瞬間の値が xl/workbook.xml の `<calcPr calcMode="...">` に焼き込まれる**。
++   Manual のまま SaveAs すると `calcMode="manual"` が明示され、Automatic で SaveAs すると `calcMode` 属性自体が
++   省略される(Excel の既定値が automatic のため)。これを ZIP として直接開いて確認した(下記「(b) の検証方法」参照)。
++2. **`.xltx`/`.xltm` は `Workbooks.Open` で開き直すと、テンプレート自体を編集用に開くのではなく、
++   それを元にした新規ブック(未保存、`FileFormat` は既定の 51 など)が生成される**。Excel のテンプレート
++   ダブルクリック相当の挙動が `Workbooks.Open` でも起きる。そのため、テンプレート形式の `FileFormat` を
++   確認するテストは reopen ではなく「SaveAs 直後、閉じる前にその場で `Workbook.FileFormat` を見る」形にした。
++3. **`Workbook.HasVBProject` は Trust Center の「VBA プロジェクト オブジェクト モデルへのアクセスを信頼する」
++   設定なしでも例外を投げずに読める**(実機確認、`False` が返る)。例外を投げるのは `Workbook.VBProject`
++   オブジェクト自体へのアクセスであり、`HasVBProject` は単なる bool プロパティなので影響を受けない。
++4. **`Workbook.Save()` は `DisplayAlerts=$false` の下で確認ダイアログなしに即座に完了する**(同一パス・同一
++   形式での上書き)。`SaveAs` を「既に自分自身が開いているファイルと同じパス」に対して呼んでもロック競合や
++   例外にはならない(同一プロセスが保持しているロックのため)。このため「Save 経路が実際に選ばれたか」を
++   外部から観測できる副作用の差はほぼ無く、テストでは `Test-XlsSamePath` の判定ロジック自体を COM なしで
++   単体テストする形で担保した(上記「実装した関数」参照)。
++5. **Manual のまま先行セルの値を書き換えても、数式セルの `Value2` は古いまま**(実機確認: `=A1*2` で
++   `A1` を 10→99 に変えても `A2` は 20 のまま)。`Set-XlsCalculationAutomatic` の
++   `Calculation=Automatic; CalculateFullRebuild()` で確実に最新化されることを確認した(99*2=198)。
++
++### (b) の受け入れ要点「保存後に開き直すと Calculation が Automatic」の検証方法について(判断の記録)
++設計(01-design.md §3.2)は保存**後**の `Application.Calculation`(ライブセッション側)の扱いを明記していない。
++一方で T-03 で確立した `Invoke-XlsSession` は、`Workbooks.Open`/`Add` の直後・`ScriptBlock` 実行前に必ず
++`Application.Calculation = xlCalculationManual` を強制する(G-06 上、COM は `Invoke-XlsSession` 経由でしか
++触れないため、この強制を回避してファイル側の状態を COM で覗く手段がない)。
++
++そこで次の 2 点を切り分けて判断した。
++- **ファイルに焼き込まれる状態**(受け入れ要点(b)が指しているもの): 「踏んだ罠 1」のとおり、保存の瞬間の
++  `Application.Calculation` がそのまま `xl/workbook.xml` に反映される。`Save-XlsWorkbook` は保存前に必ず
++  Automatic + `CalculateFullRebuild` を行うため、保存された瞬間に(b)は満たされる。これを COM を使わず
++  `System.IO.Compression.ZipFile` で `xl/workbook.xml` を直接読んで検証した(`tests/Save-XlsWorkbook.Tests.ps1`
++  の `Get-XlsxCalcModeFromDisk`)。COM を経由しないので G-06 に抵触しない。
++- **保存後のライブセッション側の `Application.Calculation`**: 上記の理由で(b)は保存の瞬間に確定しており、
++  ライブセッション側をどちらに戻しても(b)の充足には影響しない。`Invoke-XlsSession` がセッション全体を通じて
++  「Manual で始まる」という前提を確立している以上、`Save-XlsWorkbook` から戻った後の `ScriptBlock` の残りの
++  処理(続けて別のセルを編集する等)が引き続き Manual の恩恵(パフォーマンス)を受けられるよう、保存後は
++  **Manual に戻す**実装にした。`finally` ブロックで戻すため、`Save`/`SaveAs` が例外を投げた場合でも
++  Manual に戻ることを保証している。
++
++### .xlsm の HasVBProject 検証(タスクカードの2段構え方針への対応)
++1段目(必須): マクロなしの新規ワークブックを `.xlsm` として `Save-XlsWorkbook` で保存し、`FileFormat` が 52、
++`HasVBProject` が `false` のまま拡張子と形式が一致することを検証した。実機で確認済み(緑)。
++
++2段目(既存 `.xlsm` があれば `HasVBProject` 維持を検証): リポジトリにマクロ付き `.xlsm` fixture が存在しない
++ため実施しなかった。マクロ付き `.xlsm` を新規に用意するには Excel の Trust Center 設定
++(「VBA プロジェクト オブジェクト モデルへのアクセスを信頼する」)を有効化する必要があるが、これは
++実行環境のセキュリティ設定を書き換える操作であり、本タスクの範囲外・かつ避けるべき操作と判断し、行わなかった。
++将来 T-13/T-16 等でマクロ付き fixture が正当な理由で追加された場合は、その fixture を使って2段目を
++追加できる(`Save-XlsWorkbook` 自体の実装は変更不要。フォーマット選択とファイル保存の経路は拡張子だけで
++決まり、マクロの有無を関知しないため)。
++
++### レビュー指摘への対応
++初回実装のため該当なし(前提タスク T-03 のレビュー指摘は「テストの COM は Invoke-XlsSession 内のみ／
++保存は Save-XlsWorkbook のみ／fixture は静的ファイル／定数は `$script:Xl` 集約+`com-constants.md` 追記」
++であり、いずれも本タスクの実装・テストで踏襲した: テストの COM 操作はすべて `Invoke-XlsSession` の
++`ScriptBlock` 内。保存を伴う準備は行わず、既存の `tests/fixtures/blank.xlsx` は使用していない(すべて
++`New-TempXlsPathWithExtension` で新規パスを都度発行し、`Invoke-XlsSession` の中で作成・保存する)。
++使用した定数はすべて `$script:Xl` に集約し `com-constants.md` に実測日付・確認方法つきで追記した)。
++
++### 回帰修正(範囲内の必要な変更)
++`tests/T01.Tests.ps1` の「スタブ関数は throw 文を含む」ループから `Invoke-XlsSession` と
++`Save-XlsWorkbook` を除外した。`Save-XlsWorkbook` は自身の `ScriptBlock` 直下に `throw` を持たず
++(拡張子検証は `Get-XlsSaveFileFormat` に、パス比較は `Test-XlsSamePath` に委譲しているため)、実装後は
++このテストが確実に失敗する。T-03 round 1 レビューで「T-01 の定数件数 assertion が次タスクで陳腐化する」
++と指摘されたのと同じ性質の回帰であり、同じ考え方(タスクカードの範囲外を触っていないというより、
++自分のタスクの実装が引き起こす必要な回帰修正)で対応した。`Invoke-XlsSession` は実装後も自身のエラー処理に
++`throw` が残っているため偶然パスしていたが、もはやスタブではない事実を明示するため合わせて除外した。
++
++### テスト実行結果(自分で実行、実機、round 1)
++```
++powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-Pester -Path tests\Save-XlsWorkbook.Tests.ps1"
++Passed: 14 Failed: 0 Skipped: 0 Pending: 0 Inconclusive: 0
++
++powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-Pester -Path tests"
++Passed: 36 Failed: 0 Skipped: 0 Pending: 0 Inconclusive: 0
++```
++実行前後で `Get-Process EXCEL` の PID 差分ゼロを確認済み(残骸なし)。
++
++## レビュー round 1 (harness/state/reviews/T-04.md) への対応 (G-16)
++
++判定: `fix`。指摘ごとに対応した/対応しない(理由)を記録する。
++
++### 1. [blocking] 単一セルへの scalar `Value2` 代入も G-08 違反 → 対応した
++指摘のとおり、G-08「Range.Value2 への代入は [object[,]] のみ」に単一セルの例外はなく、
++`tests/Save-XlsWorkbook.Tests.ps1` の5箇所(`$marker`、`'first'`、`'second'`、`10`、`99`)は
++scalar を直接代入していた。自己チェックの○も事実と一致していなかった(訂正: 誤り)。
++
++対応: レビュー指摘のスニペットに沿って `[Array]::CreateInstance([object], 1, 1)` で 1x1 の
++`[object[,]]` を作るヘルパー関数 `New-XlsSingleCellArray -Value <obj>` をテストファイルに追加し、
++該当5箇所すべてをこのヘルパー経由の代入に置き換えた(`tests/Save-XlsWorkbook.Tests.ps1`)。
++`$ws.Range('A2').Formula = '=A1*2'` は `Formula` プロパティであり `Value2` ではないため G-08 の
++対象外(変更していない)。
++
++### 2. [should-fix] Automatic 切替〜Save/SaveAs〜状態復元を同じ try/finally に入れる → 対応した
++指摘のとおり、`Set-XlsCalculationAutomatic` の呼び出しとパス判定(`$Workbook.Path`/`FullName` の
++COM プロパティ読み取りを含む)が `try` の外にあり、そこで例外が起きると Manual に戻らないまま
++関数を抜ける可能性があった。また `Save`/`SaveAs` の失敗が生の COM `HRESULT` メッセージのまま
++伝播し S-04 を満たしていなかった。
++
++対応: レビュー指摘のスニペットに沿って `skill/scripts/XlsAgent.psm1` の `Save-XlsWorkbook` を
++書き換えた。`$app = $Workbook.Application` を先に取っておき、`Set-XlsCalculationAutomatic` の
++呼び出し・パス判定・`Save`/`SaveAs` をすべて1つの `try` に入れ、`catch` で
++`"Failed to recalculate or save workbook to '$Path'. Check the parent directory, permissions, file locks, and extension. Excel reported: $($_.Exception.Message)"`
++に包み直し、`finally` で `$app.Calculation = $script:Xl.xlCalculationManual` を保証するようにした。
++
++検証テストを追加: `tests/Save-XlsWorkbook.Tests.ps1` の新 Context
++「error handling when Save/SaveAs fails」に、存在しない親ディレクトリへ `SaveAs` させて
++(1) ラップ後のメッセージに対象パスと `'parent directory'` という語が含まれること(次の一手が
++分かる文であること)、(2) `catch` 後も `$app.Calculation` が Manual に戻っていること、の両方を
++検証するテストを追加した。実機で SaveAs が生の COM エラー(「ファイル '...' にアクセスできません」
++系)を投げることをあらかじめ手元で確認してから、期待するラップ後メッセージの形をテストに書いた。
++
++### 3. [should-fix] OOXML テストの StreamReader にエンコーディングを明示 → 対応した
++指摘のとおり、`tests/Save-XlsWorkbook.Tests.ps1` の `Get-XlsxCalcModeFromDisk` 内
++`New-Object System.IO.StreamReader($stream)` はエンコーディングを明示しておらず、S-01/P-3
++(ファイル I/O は `-Encoding UTF8` を明示)の趣旨に反していた(xl/workbook.xml は BOM なし UTF-8
++なので実害はなかったが、規約違反は規約違反)。
++
++対応: レビュー指摘のスニペットに沿って
++`New-Object -TypeName System.IO.StreamReader -ArgumentList @($stream, [Text.Encoding]::UTF8, $true)`
++に変更した。
++
++## round 2 テスト実行結果(自分で実行、実機)
++```
++powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-Pester -Path tests\Save-XlsWorkbook.Tests.ps1"
++Passed: 15 Failed: 0 Skipped: 0 Pending: 0 Inconclusive: 0
++
++powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-Pester -Path tests"
++Passed: 37 Failed: 0 Skipped: 0 Pending: 0 Inconclusive: 0
++```
++実行前後で `Get-Process EXCEL` の PID 差分ゼロを確認済み(残骸なし)。
++
+ ## 自己チェック
+ | # | 項目 | ○/× |
+ |---|---|---|
+-| G-05 | GetActiveObject を使っていない | |
+-| G-06 | COM は Invoke-XlsSession 内のみ | |
+-| G-07 | Assert-NoOrphanExcel が AfterEach にある | |
+-| G-08 | Value2 代入は [object[,]] のみ | |
+-| G-09 | 保存は Save-XlsWorkbook のみ / DisplayAlerts=false で Close(SaveChanges:=true) しない | |
+-| G-11 | 7 専用構文なし | |
+-| G-13 | Pester テストがある | |
+-| G-15 | テストは緑 | |
++| G-05 | GetActiveObject を使っていない | ○ |
++| G-06 | COM は Invoke-XlsSession 内のみ | ○ |
++| G-07 | Assert-NoOrphanExcel が AfterEach にある | ○ |
++| G-08 | Value2 代入は [object[,]] のみ | ○(round 1 で指摘された scalar 代入5箇所を `New-XlsSingleCellArray` 経由の [object[,]] に修正済み。単一セルの例外はない) |
++| G-09 | 保存は Save-XlsWorkbook のみ / DisplayAlerts=false で Close(SaveChanges:=true) しない | ○ |
++| G-11 | 7 専用構文なし | ○ |
++| G-13 | Pester テストがある | ○ |
++| G-15 | テストは緑 | ○(実機で自分で実行して確認、round 2: 対象15/全体37、いずれも failed 0) |
+diff --git a/skill/reference/com-constants.md b/skill/reference/com-constants.md
+index 6906a6a..af3c56e 100644
+--- a/skill/reference/com-constants.md
++++ b/skill/reference/com-constants.md
+@@ -9,12 +9,12 @@
+ | xlCellTypeFormulas | -4123 | SpecialCells | |
+ | xlErrors | 16 | SpecialCells 第 2 引数 | |
+ | xlCalculationManual | -4135 | Application.Calculation | 2026-08-17（T-03 Invoke-XlsSession、実機） |
+-| xlCalculationAutomatic | -4105 | Application.Calculation | |
+-| xlOpenXMLWorkbook | 51 | SaveAs .xlsx | |
+-| xlOpenXMLWorkbookMacroEnabled | 52 | SaveAs .xlsm | |
+-| xlOpenXMLTemplateMacroEnabled | 53 | SaveAs .xltm | |
+-| xlOpenXMLTemplate | 54 | SaveAs .xltx | |
+-| xlCSV | 6 | SaveAs .csv | |
++| xlCalculationAutomatic | -4105 | Application.Calculation | 2026-08-17（T-04 Save-XlsWorkbook、実機。Automatic のまま保存すると xl/workbook.xml の calcPr から calcMode 属性が省略されることまで確認） |
++| xlOpenXMLWorkbook | 51 | SaveAs .xlsx | 2026-08-17（T-04 Save-XlsWorkbook、実機。SaveAs 直後の Workbook.FileFormat で確認） |
++| xlOpenXMLWorkbookMacroEnabled | 52 | SaveAs .xlsm | 2026-08-17（T-04 Save-XlsWorkbook、実機。SaveAs 直後・再オープン後とも FileFormat=52 を確認） |
++| xlOpenXMLTemplateMacroEnabled | 53 | SaveAs .xltm | 2026-08-17（T-04 Save-XlsWorkbook、実機。SaveAs 直後の Workbook.FileFormat で確認） |
++| xlOpenXMLTemplate | 54 | SaveAs .xltx | 2026-08-17（T-04 Save-XlsWorkbook、実機。SaveAs 直後の Workbook.FileFormat で確認。Workbooks.Open で開き直すとテンプレートから新規ブックが生成されるため、reopen では確認できない罠あり） |
++| xlCSV | 6 | SaveAs .csv | 2026-08-17（T-04 Save-XlsWorkbook、実機。SaveAs 直後の Workbook.FileFormat とファイル内容で確認） |
+ | xlExcelLinks | 1 | LinkSources | |
+ | xlSrcRange | 1 | ListObjects.Add | |
+ | xlYes | 1 | ListObjects.Add HasHeaders | |
+diff --git a/skill/scripts/XlsAgent.psm1 b/skill/scripts/XlsAgent.psm1
+index 403d694..b8543c1 100644
+--- a/skill/scripts/XlsAgent.psm1
++++ b/skill/scripts/XlsAgent.psm1
+@@ -19,10 +19,20 @@ $script:Xl = @{
+     # （Workbooks.Count が 0 の間は設定できない罠。T-02 実装メモ参照）。実機で -4135 を確認済み。
+     xlCalculationManual = -4135
+ 
+-    # xlOpenXMLWorkbook（51、SaveAs .xlsx 用）は T-03 round 2 で一時的にここへ追加したが、
+-    # round 3 でテストfixtureを静的ファイル化し SaveAs 呼び出し自体を削除したため未使用に戻った。
+-    # G-12（使っているものだけ載せる）に従い削除。Save-XlsWorkbook（T-04）で実際に使うタイミングで
+-    # 改めて追加する。
++    # T-04 Save-XlsWorkbook: 保存前に Automatic へ戻す。実機で確認済み（実装メモ参照）:
++    # Application.Calculation が Automatic のまま保存すると xl/workbook.xml の <calcPr> から
++    # calcMode 属性自体が省略される（Excel の既定値が automatic のため）。Manual で保存すると
++    # calcMode="manual" が明示的に書き込まれる。
++    xlCalculationAutomatic = -4105
++
++    # T-04 Save-XlsWorkbook: 拡張子 -> SaveAs の FileFormat。実機で SaveAs 直後の Workbook.FileFormat
++    # を読み戻して確認済み（.xltx/.xltm は Workbooks.Open で開き直すとテンプレートから新規ブックが
++    # 生成される罠があるため、SaveAs 直後のその場で確認した。実装メモ参照）。
++    xlOpenXMLWorkbook = 51
++    xlOpenXMLWorkbookMacroEnabled = 52
++    xlOpenXMLTemplate = 54
++    xlOpenXMLTemplateMacroEnabled = 53
++    xlCSV = 6
+ }
+ 
+ if (-not ('XlsAgent.NativeMethods' -as [type])) {
+@@ -361,16 +371,139 @@ function Invoke-XlsSession {
+     }
+ }
+ 
++function Get-XlsSaveFileFormat {
++    <#
++    .SYNOPSIS
++        保存先パスの拡張子から SaveAs に渡す FileFormat 定数を決める。COM は触らない純粋関数。
++        Export しない内部ヘルパー（T-04）。
++    .PARAMETER Path
++        保存先パス（拡張子だけを見る。ファイルの存在は問わない）。
++    .EXAMPLE
++        Get-XlsSaveFileFormat -Path 'C:\tmp\book.xlsm'
++    .NOTES
++        01-design.md §3.2 の対応表: .xlsx->51 .xlsm->52 .xltx->54 .xltm->53 .csv->6。
++        いずれも実機で SaveAs 直後の Workbook.FileFormat を読み戻して確認済み（実装メモ参照）。
++        対応表にない拡張子は、次の一手が分かる例外にする（S-04）。
++    #>
++    [CmdletBinding()]
++    param(
++        [Parameter(Mandatory = $true)]
++        [string]$Path
++    )
++
++    $ext = [IO.Path]::GetExtension($Path)
++    switch ($ext.ToLowerInvariant()) {
++        '.xlsx' { return $script:Xl.xlOpenXMLWorkbook }
++        '.xlsm' { return $script:Xl.xlOpenXMLWorkbookMacroEnabled }
++        '.xltx' { return $script:Xl.xlOpenXMLTemplate }
++        '.xltm' { return $script:Xl.xlOpenXMLTemplateMacroEnabled }
++        '.csv' { return $script:Xl.xlCSV }
++        default {
++            throw "Save-XlsWorkbook does not know the FileFormat for extension '$ext' (path: '$Path'). Supported extensions: .xlsx, .xlsm, .xltx, .xltm, .csv."
++        }
++    }
++}
++
++function Test-XlsSamePath {
++    <#
++    .SYNOPSIS
++        2 つのパス文字列が同一ファイルを指すかを FullName 相当の正規化で比較する。
++        COM は一切触らない純粋関数。Export しない内部ヘルパー（T-04）。
++    .PARAMETER PathA
++        比較するパス（空文字列・$null なら「同一ではない」を返す。未保存ワークブックの
++        Workbook.Path が空文字列であることに対応するため）。
++    .PARAMETER PathB
++        比較するもう一方のパス。
++    .EXAMPLE
++        Test-XlsSamePath -PathA $Workbook.FullName -PathB $Path
++    .NOTES
++        [IO.FileInfo]::FullName で相対パス・大文字小文字・区切り文字の違いを正規化してから比較する
++        （Windows のファイルパスは大文字小文字を区別しないため OrdinalIgnoreCase）。
++        呼び出し側（Save-XlsWorkbook）が Workbook.Path / Workbook.FullName を読む COM アクセス自体を
++        行い、ここには文字列だけを渡すことで、このヘルパーを COM なしに単体テストできるようにしている。
++    #>
++    [CmdletBinding()]
++    param(
++        [AllowEmptyString()]
++        [string]$PathA,
++
++        [AllowEmptyString()]
++        [string]$PathB
++    )
++
++    if ([string]::IsNullOrEmpty($PathA) -or [string]::IsNullOrEmpty($PathB)) {
++        return $false
++    }
++
++    $fullA = (New-Object IO.FileInfo($PathA)).FullName
++    $fullB = (New-Object IO.FileInfo($PathB)).FullName
++    return [string]::Equals($fullA, $fullB, [StringComparison]::OrdinalIgnoreCase)
++}
++
++function Set-XlsCalculationAutomatic {
++    <#
++    .SYNOPSIS
++        Application.Calculation を xlCalculationAutomatic に戻し CalculateFullRebuild を実行する。
++        Save-XlsWorkbook（T-04）と Test-XlsFormulas（T-10、02-implementation-plan.md §5）が共有する
++        内部ヘルパー。Export しない。
++    .PARAMETER Application
++        対象の Excel.Application COM オブジェクト。Invoke-XlsSession の ScriptBlock 内
++        （またはそこから得た Workbook.Application）から渡すこと（G-06）。
++    .EXAMPLE
++        Set-XlsCalculationAutomatic -Application $Workbook.Application
++    .NOTES
++        罠（実機確認、実装メモ参照）: Application.Calculation は「今このプロパティに入っている値」が
++        SaveAs/Save の瞬間に xl/workbook.xml の <calcPr calcMode="..."/> へそのまま焼き込まれる。
++        Manual のまま保存すると calcMode="manual" が明示され、Automatic で保存すると calcMode 属性
++        自体が省略される（Excel の既定が automatic のため）。CalculateFullRebuild は Manual 中に
++        変更された数式の依存先が古い Value2 のままになる（実機確認）ことへの対策で、保存前に必ず
++        呼ぶ。
++    #>
++    [CmdletBinding()]
++    param(
++        [Parameter(Mandatory = $true)]
++        $Application
++    )
++
++    $Application.Calculation = $script:Xl.xlCalculationAutomatic
++    $Application.CalculateFullRebuild()
++}
++
+ function Save-XlsWorkbook {
+     <#
+     .SYNOPSIS
+-        ワークブックを再計算した上で保存する（保存はこの関数からのみ行う）。
++        ワークブックを再計算した上で保存する（保存はこの関数からのみ行う。G-09）。
+     .PARAMETER Workbook
+         Invoke-XlsSession の ScriptBlock 内で受け取った Workbook COM オブジェクト。
+     .PARAMETER Path
+-        保存先パス。拡張子から FileFormat を決定する。
++        保存先パス。拡張子（.xlsx/.xlsm/.xltx/.xltm/.csv）から FileFormat を決定する。
++        Workbook の現在の保存先（FullName）とこの Path が同一ファイルを指す場合は Save()、
++        それ以外は SaveAs() を使う。
+     .EXAMPLE
+         Invoke-XlsSession -Path $p -ScriptBlock { param($app, $wb) Save-XlsWorkbook -Workbook $wb -Path $p }
++    .NOTES
++        保存前に Application.Calculation を xlCalculationAutomatic に戻し CalculateFullRebuild を
++        実行する（Invoke-XlsSession はセッション開始時に Manual にするため、手動のまま保存すると
++        開いた人の環境で古い値が見える。01-design.md §3.2、Set-XlsCalculationAutomatic 参照）。
++
++        保存後は Application.Calculation を xlCalculationManual に戻す。01-design.md §3.2 は
++        保存後の扱いを明記していないが、Automatic で保存した時点で xl/workbook.xml に
++        calcMode 属性省略（= automatic）が焼き込まれているため、「保存後に開き直すと Automatic」
++        という受け入れ要点（T-04(b)）は保存の瞬間に既に満たされている。したがって保存後は、
++        Invoke-XlsSession がセッション開始時に確立した「セッション中は Manual」という前提を
++        ScriptBlock の残りの処理のために壊さないよう、ライブの Application オブジェクト側は
++        Manual に戻す判断にした（実装メモ参照）。
++
++        DisplayAlerts=$false は Invoke-XlsSession が起動時に設定済みという前提で SaveAs する
++        （G-09 が禁じるのは DisplayAlerts=$false の状態で Workbook.Close(SaveChanges:=$true) を
++        呼ぶことであり、Save/SaveAs 自体を禁じてはいない。保存の唯一の経路はこの関数であり、
++        ここでは Close を呼ばない）。
++
++        レビュー指摘対応（T-04 round 1 should-fix）: 以前は Set-XlsCalculationAutomatic の呼び出しと
++        パス判定が try の外にあり、CalculateFullRebuild や COM プロパティ取得が例外を投げると
++        Manual に戻らないまま関数を抜けてしまう可能性があった。Automatic 切替から Save/SaveAs までを
++        1 つの try に入れ、catch で生の COM 例外（HRESULT のみ）を次の一手が分かるメッセージに
++        包み直し、finally で必ず Manual に戻す（S-04・G-16）。
+     #>
+     [CmdletBinding()]
+     param(
+@@ -381,7 +514,33 @@ function Save-XlsWorkbook {
+         [string]$Path
+     )
+ 
+-    throw 'Save-XlsWorkbook は未実装です（T-04 で実装予定）。'
++    $fileFormat = Get-XlsSaveFileFormat -Path $Path
++    $app = $Workbook.Application
++
++    try {
++        Set-XlsCalculationAutomatic -Application $app
++
++        $currentFullName = $null
++        if ($Workbook.Path) {
++            $currentFullName = $Workbook.FullName
++        }
++        $sameFile = Test-XlsSamePath -PathA $currentFullName -PathB $Path
++
++        if ($sameFile) {
++            $Workbook.Save()
++        }
++        else {
++            $targetFullName = (New-Object IO.FileInfo($Path)).FullName
++            $Workbook.SaveAs($targetFullName, $fileFormat)
++        }
++    }
++    catch {
++        throw "Failed to recalculate or save workbook to '$Path'. Check the parent directory, permissions, file locks, and extension. Excel reported: $($_.Exception.Message)"
++    }
++    finally {
++        # 保存の成否によらず、セッションの Manual 前提へ戻す（.NOTES 参照）。
++        $app.Calculation = $script:Xl.xlCalculationManual
++    }
+ }
+ 
+ function Get-XlsOverview {
+diff --git a/tests/Save-XlsWorkbook.Tests.ps1 b/tests/Save-XlsWorkbook.Tests.ps1
+new file mode 100644
+index 0000000..07f8d6f
+--- /dev/null
++++ b/tests/Save-XlsWorkbook.Tests.ps1
+@@ -0,0 +1,401 @@
++﻿#Requires -Version 5.1
++
++<#
++tests/Save-XlsWorkbook.Tests.ps1
++
++T-04: Save-XlsWorkbook（保存の唯一の経路。G-09）の受け入れテスト。
++harness/state/tasks/T-04.md の受け入れテスト要点:
++  (a) .xlsm を保存してマクロが残る（VBProject アクセス不可でも HasVBProject で確認）
++  (b) 保存後に開き直して Calculation が Automatic
++  追加: .xlsx 新規保存→開き直して内容一致、同一パスへの再保存（Save 経路）、
++        拡張子から FileFormat が正しく選ばれる、CalculateFullRebuild により数式の値が
++        保存前に最新化される
++
++G-06: COM はすべて Invoke-XlsSession の ScriptBlock 内、または Invoke-XlsSession 自身の中でのみ
++触る。このテストファイルも例外ではない。ただし Get-XlsSaveFileFormat / Test-XlsSamePath は
++COM を一切使わない純粋関数（Save-XlsWorkbook 内部ヘルパー）なので、モジュールスコープに
++直接入って（T-01/T-02 と同じ `& $script:ModuleRef { ... }` パターンで）COM なしに単体テストする。
++
++(b) の「保存後に開き直すと Automatic」の検証は、Invoke-XlsSession をもう一度使って COM で
++開き直す方法は取らない。Invoke-XlsSession は Open/Add の直後に必ず Application.Calculation を
++Manual に強制するため（G-06 上コレを避ける手段がない）、COM 経由で開き直すと常に Manual に
++上書きされてしまい、ファイルに焼き込まれた状態を観測できない。代わりに、保存された .xlsx を
++（Excel を経由せず）.NET の System.IO.Compression で ZIP として開き、xl/workbook.xml の
++<calcPr calcMode="..."/> を直接読む。これは COM ではないので G-06 に抵触しない。
++Save-XlsWorkbook の実装メモに、Automatic で保存すると calcMode 属性自体が省略される
++（Excel の既定値が automatic のため）ことを実機確認した記録がある。
++
++.xlsm の HasVBProject 検証はタスクカードの2段構え方針のうち、実行可能な1段目のみを行う:
++「マクロなし .xlsm でも FileFormat 52 で保存され HasVBProject が false のまま拡張子と形式が
++一致する」ことを検証する。2段目（マクロ付き既存 .xlsm を使った HasVBProject 維持の検証）は、
++リポジトリにマクロ付き fixture が存在しないため実施しない。マクロ付き .xlsm を新規に作るには
++Excel の「VBA プロジェクト オブジェクト モデルへのアクセスを信頼する」設定（Trust Center）が
++有効である必要があり、これはテスト実行環境のセキュリティ設定を書き換える行為に当たるため
++行わない（実装メモ参照）。
++#>
++
++$here = Split-Path -Parent $MyInvocation.MyCommand.Path
++. (Join-Path $here 'Common.ps1')
++
++$moduleName = 'XlsAgent'
++$modulePath = Join-Path $here '..\skill\scripts\XlsAgent.psm1'
++
++function New-XlsSingleCellArray {
++    <#
++    .SYNOPSIS
++        単一値を 1x1 の [object[,]] にラップする。COM は触らない。
++    .PARAMETER Value
++        Range.Value2 に代入したい単一の値。
++    .EXAMPLE
++        $ws.Range('A1').Value2 = (New-XlsSingleCellArray -Value 'hello')
++    .NOTES
++        レビュー指摘対応（T-04 round 1 blocking）: G-08「Range.Value2 への代入は [object[,]] のみ」に
++        単一セルの例外はない。テストコードでも scalar を直接代入せず、この関数で必ず [object[,]] に
++        包んでから Value2 へ渡す。
++    #>
++    [CmdletBinding()]
++    param(
++        [AllowNull()]
++        $Value
++    )
++
++    [object[,]]$cell = [Array]::CreateInstance([object], 1, 1)
++    $cell[0, 0] = $Value
++    return , $cell
++}
++
++function New-TempXlsPathWithExtension {
++    <#
++    .SYNOPSIS
++        任意の拡張子で一時テストパスを発行する（New-TempXlsxPath の拡張子可変版）。
++        ファイル自体は作らない。COM は触らない。
++    #>
++    [CmdletBinding()]
++    param(
++        [Parameter(Mandatory = $true)]
++        [string]$Extension
++    )
++
++    $dir = Join-Path $env:TEMP 'xlsagent-tests'
++    if (-not (Test-Path -LiteralPath $dir)) {
++        New-Item -ItemType Directory -Path $dir -Force | Out-Null
++    }
++
++    Join-Path $dir ("{0}{1}" -f [guid]::NewGuid().ToString(), $Extension)
++}
++
++function Get-XlsxCalcModeFromDisk {
++    <#
++    .SYNOPSIS
++        保存済み .xlsx を Excel を使わず ZIP として開き、xl/workbook.xml の
++        <calcPr calcMode="..."/> を読む。COM は一切使わない（G-06 に抵触しない）。
++    .EXAMPLE
++        Get-XlsxCalcModeFromDisk -Path 'C:\tmp\book.xlsx'
++    #>
++    [CmdletBinding()]
++    param(
++        [Parameter(Mandatory = $true)]
++        [string]$Path
++    )
++
++    Add-Type -AssemblyName System.IO.Compression.FileSystem
++    $zip = [System.IO.Compression.ZipFile]::OpenRead($Path)
++    try {
++        $entry = $zip.GetEntry('xl/workbook.xml')
++        if (-not $entry) {
++            throw "xl/workbook.xml not found inside '$Path'."
++        }
++        $stream = $entry.Open()
++        # レビュー指摘対応（T-04 round 1 should-fix）: エンコーディングを明示する（S-01/P-3）。
++        # xl/workbook.xml は BOM なし UTF-8 なので detectEncodingFromByteOrderMarks は $true のままでよい。
++        $reader = New-Object -TypeName System.IO.StreamReader -ArgumentList @($stream, [Text.Encoding]::UTF8, $true)
++        try {
++            $xml = $reader.ReadToEnd()
++        }
++        finally {
++            $reader.Dispose()
++        }
++
++        if ($xml -match '<calcPr[^>]*\bcalcMode="([^"]*)"') {
++            return $matches[1]
++        }
++        elseif ($xml -match '<calcPr\b') {
++            # calcMode 属性省略時の Excel の既定値は automatic。
++            return 'auto-default'
++        }
++        else {
++            return $null
++        }
++    }
++    finally {
++        $zip.Dispose()
++    }
++}
++
++Describe 'Save-XlsWorkbook (T-04)' {
++
++    BeforeEach {
++        Import-Module $modulePath -Force
++        $script:ModuleRef = Get-Module $moduleName
++        $script:BaselinePids = Get-ExcelPids
++    }
++
++    AfterEach {
++        Assert-NoOrphanExcel -Baseline $script:BaselinePids
++        Remove-Module $moduleName -ErrorAction SilentlyContinue
++    }
++
++    AfterAll {
++        Remove-Module $moduleName -ErrorAction SilentlyContinue
++    }
++
++    Context 'Get-XlsSaveFileFormat (pure function, no COM)' {
++
++        It 'maps each supported extension to the designed FileFormat constant' {
++            $cases = @{
++                '.xlsx' = 51
++                '.xlsm' = 52
++                '.xltx' = 54
++                '.xltm' = 53
++                '.csv'  = 6
++            }
++
++            foreach ($ext in $cases.Keys) {
++                $result = & $script:ModuleRef { param($p) Get-XlsSaveFileFormat -Path $p } "C:\tmp\book$ext"
++                $result | Should Be $cases[$ext]
++            }
++        }
++
++        It 'is case-insensitive on the extension' {
++            $result = & $script:ModuleRef { param($p) Get-XlsSaveFileFormat -Path $p } 'C:\tmp\BOOK.XLSM'
++            $result | Should Be 52
++        }
++
++        It 'throws a next-step error for an unsupported extension' {
++            $errorSeen = $null
++            try {
++                & $script:ModuleRef { param($p) Get-XlsSaveFileFormat -Path $p } 'C:\tmp\book.txt'
++            }
++            catch {
++                $errorSeen = $_
++            }
++
++            $errorSeen | Should Not Be $null
++            $errorSeen.Exception.Message | Should Match '\.txt'
++            $errorSeen.Exception.Message | Should Match 'xlsx'
++        }
++    }
++
++    Context 'Test-XlsSamePath (pure function, no COM)' {
++
++        It 'treats identical paths as the same file' {
++            $p = 'C:\tmp\xlsagent-tests\book.xlsx'
++            $result = & $script:ModuleRef { param($a, $b) Test-XlsSamePath -PathA $a -PathB $b } $p $p
++            $result | Should Be $true
++        }
++
++        It 'ignores case (Windows paths are case-insensitive)' {
++            $result = & $script:ModuleRef { param($a, $b) Test-XlsSamePath -PathA $a -PathB $b } 'C:\Tmp\Book.xlsx' 'c:\tmp\book.xlsx'
++            $result | Should Be $true
++        }
++
++        It 'treats different paths as different files' {
++            $result = & $script:ModuleRef { param($a, $b) Test-XlsSamePath -PathA $a -PathB $b } 'C:\tmp\a.xlsx' 'C:\tmp\b.xlsx'
++            $result | Should Be $false
++        }
++
++        It 'treats an empty PathA (unsaved workbook) as not the same file' {
++            $result = & $script:ModuleRef { param($a, $b) Test-XlsSamePath -PathA $a -PathB $b } '' 'C:\tmp\a.xlsx'
++            $result | Should Be $false
++        }
++    }
++
++    Context '.xlsx save/reopen and FileFormat selection (integration, real Excel)' {
++
++        It 'saves a new workbook via SaveAs, and reopening it shows the same content' {
++            $path = New-TempXlsPathWithExtension -Extension '.xlsx'
++            $marker = 'xlsagent-{0}' -f ([guid]::NewGuid())
++
++            Invoke-XlsSession -Path $path -ScriptBlock {
++                param($app, $wb)
++                $ws = $wb.Worksheets.Item(1)
++                $ws.Range('A1').Value2 = (New-XlsSingleCellArray -Value $marker)
++                Save-XlsWorkbook -Workbook $wb -Path $path
++            }
++
++            $seen = Invoke-XlsSession -Path $path -ReadOnly -ScriptBlock {
++                param($app, $wb)
++                $wb.Worksheets.Item(1).Range('A1').Value2
++            }
++
++            $seen | Should Be $marker
++        }
++
++        It 'saves to the same path a second time via Save() and picks up the new content' {
++            $path = New-TempXlsPathWithExtension -Extension '.xlsx'
++
++            Invoke-XlsSession -Path $path -ScriptBlock {
++                param($app, $wb)
++                $ws = $wb.Worksheets.Item(1)
++                $ws.Range('A1').Value2 = (New-XlsSingleCellArray -Value 'first')
++                Save-XlsWorkbook -Workbook $wb -Path $path
++
++                # 同一パスへの2回目の保存（Save() 経路）。SaveAs の「既に開いているファイルへの上書き」
++                # 確認ダイアログは出ない（DisplayAlerts=$false）ことも、ここでハングしないことで確認する。
++                $ws.Range('A1').Value2 = (New-XlsSingleCellArray -Value 'second')
++                Save-XlsWorkbook -Workbook $wb -Path $path
++            }
++
++            $seen = Invoke-XlsSession -Path $path -ReadOnly -ScriptBlock {
++                param($app, $wb)
++                $wb.Worksheets.Item(1).Range('A1').Value2
++            }
++
++            $seen | Should Be 'second'
++        }
++
++        It 'selects the correct FileFormat for every supported extension (checked live via Workbook.FileFormat right after SaveAs)' {
++            # 罠（実装メモ参照）: .xltx/.xltm は Workbooks.Open で開き直すと、テンプレート自体ではなく
++            # それを元にした新規ブックが作られる。そのため FileFormat の確認は reopen ではなく
++            # SaveAs 直後にその場で行う（1つの Invoke-XlsSession の中、G-06 を満たしたまま）。
++            $cases = @{
++                '.xlsx' = 51
++                '.xlsm' = 52
++                '.xltx' = 54
++                '.xltm' = 53
++                '.csv'  = 6
++            }
++            $paths = @{}
++            foreach ($ext in $cases.Keys) {
++                $paths[$ext] = New-TempXlsPathWithExtension -Extension $ext
++            }
++
++            $seenFormats = Invoke-XlsSession -Path (New-TempXlsPathWithExtension -Extension '.xlsx') -ScriptBlock {
++                param($app, $wb)
++                $results = @{}
++                foreach ($ext in $paths.Keys) {
++                    Save-XlsWorkbook -Workbook $wb -Path $paths[$ext]
++                    $results[$ext] = $wb.FileFormat
++                }
++                $results
++            }
++
++            foreach ($ext in $cases.Keys) {
++                $seenFormats[$ext] | Should Be $cases[$ext]
++            }
++        }
++    }
++
++    Context '(a) .xlsm keeps HasVBProject consistent with the FileFormat/extension' {
++
++        It 'saves a macro-less workbook as .xlsm with FileFormat 52 and HasVBProject stays false' {
++            $path = New-TempXlsPathWithExtension -Extension '.xlsm'
++
++            $result = Invoke-XlsSession -Path $path -ScriptBlock {
++                param($app, $wb)
++                Save-XlsWorkbook -Workbook $wb -Path $path
++                [PSCustomObject]@{
++                    FileFormat   = $wb.FileFormat
++                    HasVBProject = $wb.HasVBProject
++                }
++            }
++
++            $result.FileFormat | Should Be 52
++            $result.HasVBProject | Should Be $false
++        }
++    }
++
++    Context '(b) Calculation handling around save' {
++
++        It 'recalculates stale formula results (CalculateFullRebuild) before saving' {
++            $path = New-TempXlsPathWithExtension -Extension '.xlsx'
++
++            $values = Invoke-XlsSession -Path $path -ScriptBlock {
++                param($app, $wb)
++                $ws = $wb.Worksheets.Item(1)
++                $ws.Range('A1').Value2 = (New-XlsSingleCellArray -Value 10)
++                $ws.Range('A2').Formula = '=A1*2'
++                $before = $ws.Range('A2').Value2
++
++                # Manual のまま先行セルを書き換える。手動計算のままなら A2 は古い値のままになる。
++                $ws.Range('A1').Value2 = (New-XlsSingleCellArray -Value 99)
++                $stillStale = $ws.Range('A2').Value2
++
++                Save-XlsWorkbook -Workbook $wb -Path $path
++
++                [PSCustomObject]@{
++                    Before  = $before
++                    Stale   = $stillStale
++                    AfterSave = $ws.Range('A2').Value2
++                }
++            }
++
++            $values.Before | Should Be 20
++            $values.Stale | Should Be 20
++            $values.AfterSave | Should Be 198
++        }
++
++        It 'bakes an Automatic calculation mode into the saved .xlsx (verified without COM, via the ZIP contents)' {
++            $path = New-TempXlsPathWithExtension -Extension '.xlsx'
++
++            Invoke-XlsSession -Path $path -ScriptBlock {
++                param($app, $wb)
++                # セッションは Manual で始まる（Invoke-XlsSession）。Save-XlsWorkbook が
++                # 保存前に Automatic へ戻すことをこのテストで確認する。
++                Save-XlsWorkbook -Workbook $wb -Path $path
++            }
++
++            $calcMode = Get-XlsxCalcModeFromDisk -Path $path
++            # Automatic で保存すると calcMode 属性自体が省略される（実機確認、実装メモ参照）。
++            $calcMode | Should Be 'auto-default'
++        }
++
++        It 'restores Application.Calculation to Manual on the live session after saving' {
++            $path = New-TempXlsPathWithExtension -Extension '.xlsx'
++            $expectedManual = & $script:ModuleRef { $script:Xl.xlCalculationManual }
++
++            $calcAfterSave = Invoke-XlsSession -Path $path -ScriptBlock {
++                param($app, $wb)
++                Save-XlsWorkbook -Workbook $wb -Path $path
++                $app.Calculation
++            }
++
++            $calcAfterSave | Should Be $expectedManual
++        }
++    }
++
++    Context 'error handling when Save/SaveAs fails (T-04 round 1 should-fix)' {
++
++        It 'wraps a SaveAs failure in an actionable message and still restores Calculation to Manual' {
++            $path = New-TempXlsPathWithExtension -Extension '.xlsx'
++            # 親ディレクトリが存在しないパス。SaveAs は生の COM エラーを投げる（実機確認）。
++            $missingParentDir = Join-Path $env:TEMP ('xlsagent-tests-missing-{0}' -f ([guid]::NewGuid()))
++            $badPath = Join-Path $missingParentDir 'book.xlsx'
++            $expectedManual = & $script:ModuleRef { $script:Xl.xlCalculationManual }
++
++            $result = Invoke-XlsSession -Path $path -ScriptBlock {
++                param($app, $wb)
++                $errorSeen = $null
++                try {
++                    Save-XlsWorkbook -Workbook $wb -Path $badPath
++                }
++                catch {
++                    $errorSeen = $_
++                }
++
++                [PSCustomObject]@{
++                    ErrorSeen        = $errorSeen
++                    CalculationAfter = $app.Calculation
++                }
++            }
++
++            $result.ErrorSeen | Should Not Be $null
++            # 生の HRESULT メッセージのままではなく、次の一手（パス・権限・ロック・拡張子の確認）が
++            # 分かる文に包み直されていること（S-04、レビュー指摘対応）。
++            $result.ErrorSeen.Exception.Message | Should Match ([regex]::Escape($badPath))
++            $result.ErrorSeen.Exception.Message | Should Match 'parent directory'
++            # catch で例外を包んだ後も、finally で確実に Manual に戻っていること。
++            $result.CalculationAfter | Should Be $expectedManual
++        }
++    }
++}
+diff --git a/tests/T01.Tests.ps1 b/tests/T01.Tests.ps1
+index bcd8990..555d9a4 100644
+--- a/tests/T01.Tests.ps1
++++ b/tests/T01.Tests.ps1
+@@ -76,7 +76,21 @@ Describe 'XlsAgent module skeleton (T-01)' {
+         $xl.xlCalculationManual | Should Be -4135
+     }
+ 
+-    foreach ($fn in $script:ExpectedFunctions) {
++    # 罠（T-04 で判明、T-03 round 1 レビューの「T-01 assertion 陳腐化」指摘と同種）:
++    # このループは「まだ未実装（スタブ）の公開関数は throw 文を含む」ことを一律に検証するものだったが、
++    # 公開関数が実タスクで実装されると、その throw は「未実装です」という一様なものではなくなり、
++    # 関数によっては本体に throw 文が一切なくなることもある（Save-XlsWorkbook は拡張子検証やパス比較を
++    # 内部ヘルパーに委譲しており、自分自身の ScriptBlock には throw 文がない）。したがって、実装済みの
++    # 関数はこのループの対象から外す。実装済みかどうかは各関数の担当タスクカード（T-03, T-04, ...）が
++    # done になった時点でここから除外していく。
++    $script:StillStubFunctions = $script:ExpectedFunctions | Where-Object {
++        # T-03: Invoke-XlsSession 実装済み（ただし自身のエラー処理に throw が残っているため、この
++        # ループに残しても偶然パスする。実装済みという事実を明示するため、ここでも除外しておく）。
++        # T-04: Save-XlsWorkbook 実装済み。
++        $_ -notin @('Invoke-XlsSession', 'Save-XlsWorkbook')
++    }
++
++    foreach ($fn in $script:StillStubFunctions) {
+         It "stub function '$fn' contains an explicit throw" {
+             Import-Module $modulePath -Force
+             $cmd = Get-Command $fn -Module $moduleName

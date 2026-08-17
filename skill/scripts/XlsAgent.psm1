@@ -19,10 +19,20 @@ $script:Xl = @{
     # （Workbooks.Count が 0 の間は設定できない罠。T-02 実装メモ参照）。実機で -4135 を確認済み。
     xlCalculationManual = -4135
 
-    # xlOpenXMLWorkbook（51、SaveAs .xlsx 用）は T-03 round 2 で一時的にここへ追加したが、
-    # round 3 でテストfixtureを静的ファイル化し SaveAs 呼び出し自体を削除したため未使用に戻った。
-    # G-12（使っているものだけ載せる）に従い削除。Save-XlsWorkbook（T-04）で実際に使うタイミングで
-    # 改めて追加する。
+    # T-04 Save-XlsWorkbook: 保存前に Automatic へ戻す。実機で確認済み（実装メモ参照）:
+    # Application.Calculation が Automatic のまま保存すると xl/workbook.xml の <calcPr> から
+    # calcMode 属性自体が省略される（Excel の既定値が automatic のため）。Manual で保存すると
+    # calcMode="manual" が明示的に書き込まれる。
+    xlCalculationAutomatic = -4105
+
+    # T-04 Save-XlsWorkbook: 拡張子 -> SaveAs の FileFormat。実機で SaveAs 直後の Workbook.FileFormat
+    # を読み戻して確認済み（.xltx/.xltm は Workbooks.Open で開き直すとテンプレートから新規ブックが
+    # 生成される罠があるため、SaveAs 直後のその場で確認した。実装メモ参照）。
+    xlOpenXMLWorkbook = 51
+    xlOpenXMLWorkbookMacroEnabled = 52
+    xlOpenXMLTemplate = 54
+    xlOpenXMLTemplateMacroEnabled = 53
+    xlCSV = 6
 }
 
 if (-not ('XlsAgent.NativeMethods' -as [type])) {
@@ -361,16 +371,139 @@ function Invoke-XlsSession {
     }
 }
 
+function Get-XlsSaveFileFormat {
+    <#
+    .SYNOPSIS
+        保存先パスの拡張子から SaveAs に渡す FileFormat 定数を決める。COM は触らない純粋関数。
+        Export しない内部ヘルパー（T-04）。
+    .PARAMETER Path
+        保存先パス（拡張子だけを見る。ファイルの存在は問わない）。
+    .EXAMPLE
+        Get-XlsSaveFileFormat -Path 'C:\tmp\book.xlsm'
+    .NOTES
+        01-design.md §3.2 の対応表: .xlsx->51 .xlsm->52 .xltx->54 .xltm->53 .csv->6。
+        いずれも実機で SaveAs 直後の Workbook.FileFormat を読み戻して確認済み（実装メモ参照）。
+        対応表にない拡張子は、次の一手が分かる例外にする（S-04）。
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $ext = [IO.Path]::GetExtension($Path)
+    switch ($ext.ToLowerInvariant()) {
+        '.xlsx' { return $script:Xl.xlOpenXMLWorkbook }
+        '.xlsm' { return $script:Xl.xlOpenXMLWorkbookMacroEnabled }
+        '.xltx' { return $script:Xl.xlOpenXMLTemplate }
+        '.xltm' { return $script:Xl.xlOpenXMLTemplateMacroEnabled }
+        '.csv' { return $script:Xl.xlCSV }
+        default {
+            throw "Save-XlsWorkbook does not know the FileFormat for extension '$ext' (path: '$Path'). Supported extensions: .xlsx, .xlsm, .xltx, .xltm, .csv."
+        }
+    }
+}
+
+function Test-XlsSamePath {
+    <#
+    .SYNOPSIS
+        2 つのパス文字列が同一ファイルを指すかを FullName 相当の正規化で比較する。
+        COM は一切触らない純粋関数。Export しない内部ヘルパー（T-04）。
+    .PARAMETER PathA
+        比較するパス（空文字列・$null なら「同一ではない」を返す。未保存ワークブックの
+        Workbook.Path が空文字列であることに対応するため）。
+    .PARAMETER PathB
+        比較するもう一方のパス。
+    .EXAMPLE
+        Test-XlsSamePath -PathA $Workbook.FullName -PathB $Path
+    .NOTES
+        [IO.FileInfo]::FullName で相対パス・大文字小文字・区切り文字の違いを正規化してから比較する
+        （Windows のファイルパスは大文字小文字を区別しないため OrdinalIgnoreCase）。
+        呼び出し側（Save-XlsWorkbook）が Workbook.Path / Workbook.FullName を読む COM アクセス自体を
+        行い、ここには文字列だけを渡すことで、このヘルパーを COM なしに単体テストできるようにしている。
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowEmptyString()]
+        [string]$PathA,
+
+        [AllowEmptyString()]
+        [string]$PathB
+    )
+
+    if ([string]::IsNullOrEmpty($PathA) -or [string]::IsNullOrEmpty($PathB)) {
+        return $false
+    }
+
+    $fullA = (New-Object IO.FileInfo($PathA)).FullName
+    $fullB = (New-Object IO.FileInfo($PathB)).FullName
+    return [string]::Equals($fullA, $fullB, [StringComparison]::OrdinalIgnoreCase)
+}
+
+function Set-XlsCalculationAutomatic {
+    <#
+    .SYNOPSIS
+        Application.Calculation を xlCalculationAutomatic に戻し CalculateFullRebuild を実行する。
+        Save-XlsWorkbook（T-04）と Test-XlsFormulas（T-10、02-implementation-plan.md §5）が共有する
+        内部ヘルパー。Export しない。
+    .PARAMETER Application
+        対象の Excel.Application COM オブジェクト。Invoke-XlsSession の ScriptBlock 内
+        （またはそこから得た Workbook.Application）から渡すこと（G-06）。
+    .EXAMPLE
+        Set-XlsCalculationAutomatic -Application $Workbook.Application
+    .NOTES
+        罠（実機確認、実装メモ参照）: Application.Calculation は「今このプロパティに入っている値」が
+        SaveAs/Save の瞬間に xl/workbook.xml の <calcPr calcMode="..."/> へそのまま焼き込まれる。
+        Manual のまま保存すると calcMode="manual" が明示され、Automatic で保存すると calcMode 属性
+        自体が省略される（Excel の既定が automatic のため）。CalculateFullRebuild は Manual 中に
+        変更された数式の依存先が古い Value2 のままになる（実機確認）ことへの対策で、保存前に必ず
+        呼ぶ。
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        $Application
+    )
+
+    $Application.Calculation = $script:Xl.xlCalculationAutomatic
+    $Application.CalculateFullRebuild()
+}
+
 function Save-XlsWorkbook {
     <#
     .SYNOPSIS
-        ワークブックを再計算した上で保存する（保存はこの関数からのみ行う）。
+        ワークブックを再計算した上で保存する（保存はこの関数からのみ行う。G-09）。
     .PARAMETER Workbook
         Invoke-XlsSession の ScriptBlock 内で受け取った Workbook COM オブジェクト。
     .PARAMETER Path
-        保存先パス。拡張子から FileFormat を決定する。
+        保存先パス。拡張子（.xlsx/.xlsm/.xltx/.xltm/.csv）から FileFormat を決定する。
+        Workbook の現在の保存先（FullName）とこの Path が同一ファイルを指す場合は Save()、
+        それ以外は SaveAs() を使う。
     .EXAMPLE
         Invoke-XlsSession -Path $p -ScriptBlock { param($app, $wb) Save-XlsWorkbook -Workbook $wb -Path $p }
+    .NOTES
+        保存前に Application.Calculation を xlCalculationAutomatic に戻し CalculateFullRebuild を
+        実行する（Invoke-XlsSession はセッション開始時に Manual にするため、手動のまま保存すると
+        開いた人の環境で古い値が見える。01-design.md §3.2、Set-XlsCalculationAutomatic 参照）。
+
+        保存後は Application.Calculation を xlCalculationManual に戻す。01-design.md §3.2 は
+        保存後の扱いを明記していないが、Automatic で保存した時点で xl/workbook.xml に
+        calcMode 属性省略（= automatic）が焼き込まれているため、「保存後に開き直すと Automatic」
+        という受け入れ要点（T-04(b)）は保存の瞬間に既に満たされている。したがって保存後は、
+        Invoke-XlsSession がセッション開始時に確立した「セッション中は Manual」という前提を
+        ScriptBlock の残りの処理のために壊さないよう、ライブの Application オブジェクト側は
+        Manual に戻す判断にした（実装メモ参照）。
+
+        DisplayAlerts=$false は Invoke-XlsSession が起動時に設定済みという前提で SaveAs する
+        （G-09 が禁じるのは DisplayAlerts=$false の状態で Workbook.Close(SaveChanges:=$true) を
+        呼ぶことであり、Save/SaveAs 自体を禁じてはいない。保存の唯一の経路はこの関数であり、
+        ここでは Close を呼ばない）。
+
+        レビュー指摘対応（T-04 round 1 should-fix）: 以前は Set-XlsCalculationAutomatic の呼び出しと
+        パス判定が try の外にあり、CalculateFullRebuild や COM プロパティ取得が例外を投げると
+        Manual に戻らないまま関数を抜けてしまう可能性があった。Automatic 切替から Save/SaveAs までを
+        1 つの try に入れ、catch で生の COM 例外（HRESULT のみ）を次の一手が分かるメッセージに
+        包み直し、finally で必ず Manual に戻す（S-04・G-16）。
     #>
     [CmdletBinding()]
     param(
@@ -381,7 +514,33 @@ function Save-XlsWorkbook {
         [string]$Path
     )
 
-    throw 'Save-XlsWorkbook は未実装です（T-04 で実装予定）。'
+    $fileFormat = Get-XlsSaveFileFormat -Path $Path
+    $app = $Workbook.Application
+
+    try {
+        Set-XlsCalculationAutomatic -Application $app
+
+        $currentFullName = $null
+        if ($Workbook.Path) {
+            $currentFullName = $Workbook.FullName
+        }
+        $sameFile = Test-XlsSamePath -PathA $currentFullName -PathB $Path
+
+        if ($sameFile) {
+            $Workbook.Save()
+        }
+        else {
+            $targetFullName = (New-Object IO.FileInfo($Path)).FullName
+            $Workbook.SaveAs($targetFullName, $fileFormat)
+        }
+    }
+    catch {
+        throw "Failed to recalculate or save workbook to '$Path'. Check the parent directory, permissions, file locks, and extension. Excel reported: $($_.Exception.Message)"
+    }
+    finally {
+        # 保存の成否によらず、セッションの Manual 前提へ戻す（.NOTES 参照）。
+        $app.Calculation = $script:Xl.xlCalculationManual
+    }
 }
 
 function Get-XlsOverview {

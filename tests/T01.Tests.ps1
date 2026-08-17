@@ -76,7 +76,21 @@ Describe 'XlsAgent module skeleton (T-01)' {
         $xl.xlCalculationManual | Should Be -4135
     }
 
-    foreach ($fn in $script:ExpectedFunctions) {
+    # 罠（T-04 で判明、T-03 round 1 レビューの「T-01 assertion 陳腐化」指摘と同種）:
+    # このループは「まだ未実装（スタブ）の公開関数は throw 文を含む」ことを一律に検証するものだったが、
+    # 公開関数が実タスクで実装されると、その throw は「未実装です」という一様なものではなくなり、
+    # 関数によっては本体に throw 文が一切なくなることもある（Save-XlsWorkbook は拡張子検証やパス比較を
+    # 内部ヘルパーに委譲しており、自分自身の ScriptBlock には throw 文がない）。したがって、実装済みの
+    # 関数はこのループの対象から外す。実装済みかどうかは各関数の担当タスクカード（T-03, T-04, ...）が
+    # done になった時点でここから除外していく。
+    $script:StillStubFunctions = $script:ExpectedFunctions | Where-Object {
+        # T-03: Invoke-XlsSession 実装済み（ただし自身のエラー処理に throw が残っているため、この
+        # ループに残しても偶然パスする。実装済みという事実を明示するため、ここでも除外しておく）。
+        # T-04: Save-XlsWorkbook 実装済み。
+        $_ -notin @('Invoke-XlsSession', 'Save-XlsWorkbook')
+    }
+
+    foreach ($fn in $script:StillStubFunctions) {
         It "stub function '$fn' contains an explicit throw" {
             Import-Module $modulePath -Force
             $cmd = Get-Command $fn -Module $moduleName
