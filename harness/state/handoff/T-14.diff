@@ -1,0 +1,519 @@
+diff --git a/harness/state/board.md b/harness/state/board.md
+index d4c71a9..4f6d4f9 100644
+--- a/harness/state/board.md
++++ b/harness/state/board.md
+@@ -16,7 +16,7 @@
+ | T-10 | Test-XlsFormulas 関数 | done | r1 | 2026-08-17 |
+ | T-11 | 外部リンク refused / -Force | done | r1 | 2026-08-17 |
+ | T-12 | Test-XlsFormulas.ps1 CLI | done | r4 | 2026-08-18 |
+-| T-13 | com-constants.md 充填 | review | r2 | 2026-08-18 |
+-| T-14 | patterns.md | todo | - | |
++| T-13 | com-constants.md 充填 | done | r2 | 2026-08-18 |
++| T-14 | patterns.md | fix | r1 | 2026-08-18 |
+ | T-15 | SKILL.md 確定 | todo | - | |
+ | T-16 | ベンチマーク | todo | - | |
+diff --git a/harness/state/handoff/T-14.diff b/harness/state/handoff/T-14.diff
+new file mode 100644
+index 0000000..e69de29
+diff --git a/harness/state/reviews/T-14.md b/harness/state/reviews/T-14.md
+new file mode 100644
+index 0000000..5e557da
+--- /dev/null
++++ b/harness/state/reviews/T-14.md
+@@ -0,0 +1,107 @@
++# Review T-14 (round 1)
++
++## 判定: fix
++
++## テスト実行
++
++- コマンド: 未実行（コード変更なしのため、ユーザー指定どおり Pester は不要）
++- 結果: passed - / failed -
++- EXCEL.EXE 差分: 該当なし（レビューでは Excel COM を起動していない）
++
++## チェックリスト
++
++| # | 項目 | ○/×/- | メモ |
++|---|---|---:|---|
++| C-1 | 関数シグネチャが設計と一致 | - | コード変更なし。 |
++| C-2 | 戻り値の形が設計と一致 | - | コード変更なし。 |
++| C-3 | Test-XlsFormulas JSON 契約 | - | 対象外。 |
++| C-4 | exit code 契約 | - | 対象外。 |
++| C-5 | §0 の確定事項に変更なし | ○ | reference 文書とタスク管理ファイルのみ。 |
++| C-6 | タスクカードの範囲外を触っていない | ○ | board、T-14 タスクカード、patterns.md に限定。 |
++| S-1 | GetActiveObject を使っていない | ○ | 9 スニペットのいずれにもなし。 |
++| S-2 | COM が Invoke-XlsSession 外に漏れていない | ○ | 全スニペットが `param($app, $wb)` から始まる ScriptBlock 本体として完結。 |
++| S-3 | finally の終了順序 | - | Invoke-XlsSession 本体の変更なし。 |
++| S-4 | throw 後にプロセスが残らない | - | セッション実装・テストの変更なし。 |
++| S-5 | Value2 を適切に使用 | ○ | `Value`/`Text` による数値・日付取得なし。 |
++| S-6 | 2 次元代入が object[,] | × | 単一セルへのスカラー代入が 4 か所あり、G-08 に反する。 |
++| S-7 | SpecialCells の例外処理 | - | 対象外。 |
++| S-8 | 危険な Close(SaveChanges:=true) なし | ○ | 保存・Close 呼び出しなし。G-09 と整合。 |
++| S-9 | Excel 全殺しなし | ○ | プロセス操作なし。 |
++| S-10 | ReadOnly・STA 検査 | - | T-03 の対象。 |
++| P-1 | #Requires -Version 5.1 | - | standalone script ではなく ScriptBlock 本体。 |
++| P-2 | PowerShell 7 専用構文なし | ○ | 5.1 互換の構文のみ。 |
++| P-3 | ファイル I/O に UTF8 明示 | - | ファイル I/O なし。 |
++| P-4 | Pester 3.4 互換 | - | テスト変更なし。 |
++| T-1 | Pester が緑 | - | ユーザー指定どおり未実行。 |
++| T-2 | AfterEach に残留検査 | - | テスト変更なし。 |
++| T-3 | 実 Excel の統合テスト | - | Pester 対象外。 |
++| T-4 | 実装計画の受け入れ要点を網羅 | - | 文書タスク。下記 T14 項目で確認。 |
++| T-5 | 異常系テスト | - | 対象外。 |
++| Q-1 | コメントベースヘルプ | - | 対象外。 |
++| Q-2 | 次の一手が分かるエラー | - | 対象外。 |
++| Q-3 | COM 定数の集約・文書化 | × | `xlValidAlertStop` が com-constants.md に未収載で、Operator の `3` に定数名がない。 |
++| Q-4 | 実装メモに COM の罠がある | ○ | Value2 の添字非対称性と Names.Add の正規化を記録。 |
++| Q-5 | 自己チェック欄の○が事実と一致 | ○ | 記載された各項目は一致。ただし自己チェックにない G-08 違反を本レビューで検出。 |
++| T14-1 | 9 パターンと実行確認記録 | ○ | 9 見出しすべてに日付・環境・具体的な読み戻し結果がある。使い捨て検証スクリプト自体は未収載。 |
++| T14-2 | スニペットの最終状態が見出しの目的と一致 | × | グラフ挿入スニペットは最後にグラフを削除する。 |
++| T14-3 | G-06 / G-09 前提と整合 | ○ | COM は ScriptBlock 内、保存・直接 Close はなし。 |
++| T14-4 | 定数名併記と com-constants.md 相互参照 | × | データ検証の定数記録が不完全。 |
++| T14-5 | 実測範囲を超えて一般化していない | × | AutoFit とシート名クォートの説明に実測範囲を超えた記述がある。 |
++| T14-6 | 各スニペットが 5〜10 行 | × | グラフ挿入が 12 行。 |
++
++## 指摘
++
++### [blocking] 単一セルへの Value2 スカラー代入が G-08 に違反
++
++- 場所: `skill/reference/patterns.md:63`, `skill/reference/patterns.md:84`, `skill/reference/patterns.md:88`, `skill/reference/patterns.md:167`
++- 内容: `$ws.Range('A1').Value2 = '...'` などのスカラー代入がある。G-08 は複数セルだけでなく、すべての `Range.Value2` 代入を `[object[,]]` に限定している。AutoFit、コメント、名前定義のスニペットがガードレール違反。
++- 修正案: コメント用のセル値は不要なので代入自体を削除する。AutoFit と名前定義は 1×1 配列にする。変更したスニペットは G-12 のため再実行し、確認記録も更新する。
++
++```powershell
++$data = New-Object 'object[,]' 1,1
++$data[0,0] = 'This is a fairly long piece of text for column width test'
++$ws.Range('A1').Value2 = $data
++```
++
++### [should-fix] グラフ挿入スニペットが成果物のグラフを削除する
++
++- 場所: `skill/reference/patterns.md:137`, `skill/reference/patterns.md:152`, `skill/reference/patterns.md:155`
++- 内容: `ChartObjects.Add` は埋め込みグラフを作成する一方、`ChartObject.Delete()` はそのオブジェクトを削除するため、スニペット終了時にはグラフが残らない。[Microsoft Learn の Add](https://learn.microsoft.com/en-us/office/vba/api/excel.chartobjects.add)／[Delete](https://learn.microsoft.com/en-us/office/vba/api/excel.chartobject.delete) の契約とも一致する。T-13 の定数実測で必要だった後始末を、成果物編集用パターンへ持ち込んでいる。また、確認欄の `ChartType=4` は公開スニペットに含まれず、コードは 12 行で 5〜10 行要件も超える。
++- 修正案: 公開スニペットから `Delete()` を除き、`Add(...).Chart` を一行にまとめて 10 行以内にする。確認は公開コードと一致させ、終了時の `ChartObjects().Count` が作成前より 1 増えたことを記録する。
++
++```powershell
++$chart = $ws.ChartObjects().Add(100, 10, 300, 200).Chart
++$chart.SetSourceData($ws.Range('A1:B3'))
++$chart.ChartType = 51 # xlColumnClustered
++```
++
++### [should-fix] データ検証の定数名と一次資料の説明が不整合
++
++- 場所: `skill/reference/patterns.md:8`, `skill/reference/patterns.md:119`, `skill/reference/patterns.md:127`
++- 内容: 冒頭では定数の一次資料をすべて com-constants.md としているが、`xlValidAlertStop=1` は同ファイルにない。また第 3 引数の `3` は公式には `xlEqual` だが、コメントに定数名がない。`Validation.Add` の Operator は optional なので、リスト検証で利用しない値をマジックナンバーとして渡す必要もない。[Validation.Add](https://learn.microsoft.com/en-us/office/vba/api/excel.validation.add)、[XlDVAlertStyle](https://learn.microsoft.com/en-us/office/vba/api/excel.xldvalertstyle)、[XlFormatConditionOperator](https://learn.microsoft.com/en-us/office/vba/api/excel.xlformatconditionoperator)。
++- 修正案: Operator は `[Type]::Missing` にし、実測済みの `xlValidAlertStop=1` を com-constants.md に確認方法付きで追加する。変更後の呼び出しを再実行する。
++
++```powershell
++$cell.Validation.Add(3, 1, [Type]::Missing, 'A,B,C')
++# Type=xlValidateList(3), AlertStyle=xlValidAlertStop(1)
++```
++
++### [should-fix] AutoFit とシート名クォートの説明を実測範囲に限定する
++
++- 場所: `skill/reference/patterns.md:57`, `skill/reference/patterns.md:161`
++- 内容: `Worksheet.Columns` が返すのも「列オブジェクト」ではなく `Range` であり、`Range.AutoFit` の対象は行または列を表す Range に限られる。現在の「範囲・列オブジェクトの両方」は任意の Range に使えるように読める。[Range.AutoFit](https://learn.microsoft.com/en-us/office/vba/api/excel.range.autofit)、[Worksheet.Columns](https://learn.microsoft.com/en-us/office/vba/api/excel.worksheet.columns)。また Names.Add の実測は `Sheet1` だけなので、単引用符で囲めば一般に安全という記述は実測を超える。シート名自身に単引用符がある場合のエスケープも扱っていない。
++- 修正案: AutoFit は「行・列を表す Range に対するメソッド」と記述する。名前定義は主張を `Sheet1` の実測に限定するか、単引用符を二重化してスペース・単引用符入りシート名でも再確認する。
++
++```powershell
++$sheetName = $ws.Name.Replace("'", "''")
++$refersTo = "='{0}'!`$A`$1" -f $sheetName
++```
++
++## 良かった点（1〜2 行、次のタスクでも続けてほしいこと）
++
++9 パターンすべてについて Excel の Version/Build、日付、読み戻したプロパティと値が具体的に記録されている。AddComment と AddCommentThreaded の両方を同一環境で実測し、AutoFit の数値や Names.Add の正規化を環境依存の事実として記録した点もよい。
++
++## SKILL.md gotchas 候補（実装メモに書かれていないが気づいた罠があれば）
++
++- `Worksheet.Columns` が返すのは Range であり、`AutoFit()` は行または列を表す Range に限定される。
++- 数式内のシート名に単引用符が含まれる場合、外側を単引用符で囲むだけでなく、名前中の単引用符を二重化する必要がある。
+\ No newline at end of file
+diff --git a/harness/state/tasks/T-14.md b/harness/state/tasks/T-14.md
+index a865903..9d54fea 100644
+--- a/harness/state/tasks/T-14.md
++++ b/harness/state/tasks/T-14.md
+@@ -33,12 +33,92 @@
+ 
+ ## 実装メモ(Sonnet が記入)
+ 
++### 進め方
++- `skill/scripts/XlsAgent.psm1` は変更していない（想定どおり）。Pester 回帰は実行していない。
++- 実測は `C:\Users\yoshi\AppData\Local\Temp\claude\...\scratchpad\verify-patterns*.ps1`
++  という使い捨てスクリプトで行い、リポジトリには含めていない（タスク指示どおり）。
++  `Import-Module skill/scripts/XlsAgent.psm1 -Force` → `Invoke-XlsSession` を各パターンごとに
++  独立したセッション（`New-TempXlsxPath` 相当の一時パス、`Workbooks.Add` 経由）で呼び、
++  `ScriptBlock` 内で操作 → 同じ `ScriptBlock` 内で結果を読み戻して確認、という手順に統一した。
++  すべてフォアグラウンド実行（`run_in_background`/Monitor は使っていない）。
++- 実行環境: Excel `$app.Version`=`16.0`、`$app.Build`=`20228`（実機で `Invoke-XlsSession` の
++  `ScriptBlock` 内から読み取り）。
++
++### 各パターンの結果要約(すべて 2026-08-18 実機確認、patterns.md に詳細記録)
++1. ヘッダー行書式: Bold/Interior.Color/HorizontalAlignment(xlCenter=-4108) とも代入・読み戻し一致。
++2. テーブル化(ListObjects.Add): SourceType=1(xlSrcRange)、HeaderRowRange の値が一致。
++3. 列幅自動調整: AutoFit 前後で ColumnWidth が 8.38→50.5 に変化（フォント・テーマ依存の実測値であり
++   一般化はしない、と patterns.md に明記）。
++4. コメント追加: **AddComment（レガシー）と AddCommentThreaded（スレッド形式）の両方がこの環境
++   （Excel Build 20228）で問題なく動作した**。タスクカードが想定していた「動かない場合」には
++   該当しなかったが、その事実（動いたこと・ビルド番号）自体を patterns.md に記録した。
++5. 条件付き書式: FormatConditions.Add の Type=1(xlCellValue)/Operator=5(xlGreater) とも一致。
++6. データ検証(リスト): Validation.Type=3(xlValidateList)、AlertStyle=1(xlValidAlertStop) を確認。
++   round 1 時点では AlertStyle が com-constants.md に個別の行がなかったため patterns.md 側の確認記録を
++   一次資料としていたが、round 2 のレビュー対応で com-constants.md に追加した（下記参照）。
++7. グラフ挿入(round 1 時点): ChartType=51(xlColumnClustered)→4(xlLine) の代入・読み戻し一致。
++   ChartObject.Delete() 後に ChartObjects().Count=0 を確認（後始末の実効性も確認）。
++   ※ round 2 のレビュー対応でスニペットから Delete() を除いたため、この結果は現在の patterns.md の
++   内容とは異なる（下記参照）。
++8. 名前定義(round 1 時点): Names.Add に単引用符付きシート名で RefersTo を渡したところ、読み戻すと
++   Excel がクォート不要と判断して単引用符を自動的に除去した文字列（`=Sheet1!$A$1`）になっていた。
++   「渡した文字列がそのまま RefersTo に残るわけではない」という罠として patterns.md に明記した。
++   ※ round 2 でシート名を変えて再実測している（下記参照）。
++9. シート追加・複製・削除: Worksheets.Count が Add で 1→2、Copy で 2→3、Delete で 3→2 と正しく推移。
++
++### 踏んだ罠
++- `Range.Value2` は**複数セル範囲への書き込みは 0-based の `[object[,]]`** だが、**同じ範囲を
++  読み戻すと 1-based** になる（`XlsAgent.psm1` の `New-XlsObjectArray2D` の実装メモに既にある
++  非対称性と同じもの）。検証スクリプトの最初のドラフトで `$hdr.Value2[0,0]` のように書き込み側と
++  同じ 0-based で読もうとして `IndexOutOfRangeException` を踏んだ。`[1,1]` に直して解消。
++  patterns.md のパターン 1・2 の確認欄に明記済み。
++- `Names.Add` の `RefersTo` はシート名にクォートを付けて渡しても、読み戻すとクォート不要な場合は
++  Excel 側で自動的に外される（パターン 8）。エージェントが書き込んだ文字列と読み戻し文字列の完全一致を
++  前提にした検証コードを書くと失敗しうる。
++
++### レビュー指摘への対応(round 1、初回実装時点)
++- 該当なし（このタスクの初回実装。前提タスク T-13 のレビュー方針「公式列挙名と実測値の区別、
++  一般化しすぎない記述」は、パターン 3（AutoFit の数値を一般化しない）・パターン 8（RefersTo の
++  自動正規化を明記）・データ検証（AlertStyle は com-constants.md 未収載である旨を明記）で踏襲した。
++
++### レビュー指摘への対応(harness/state/reviews/T-14.md round 1、判定 fix。G-16)
++
++- **[blocking] Value2 スカラー代入 4 箇所(AutoFit/コメント×2/名前定義)** → 対応した。
++  AutoFit と名前定義は 1×1 の `[object[,]]` に変更（`$data = New-Object 'object[,]' 1,1; $data[0,0] = ...`）。
++  コメント 2 箇所はセル値代入自体（`Value2 = 'legacy'` / `'threaded'`）を削除した（コメント動作の確認に
++  セル値は不要なため）。4 箇所とも `verify-fixes.ps1`（使い捨て、フォアグラウンド）で再実行し、
++  `patterns.md` の確認欄を更新済み（AutoFit: `Before/After/Val` を読み戻し。コメント: `.Text()` の
++  読み戻しが変更前と同じ値であることを確認。名前定義: 下記参照）。
++- **[should-fix] グラフ挿入スニペットが Delete() で成果物を残さない** → 対応した。公開スニペットから
++  `ChartObject.Delete()` を削除し、`ChartObjects().Add(...).Chart` を 1 行にまとめて 10 行に短縮
++  （レビュー提示のコード例と同じ形）。確認欄を「実行前後の `ChartObjects().Count` が `0`→`1`」
++  「`ChartType` 読み戻しが `51`」に更新し、グラフを削除せず残す運用に変えたことを明記した。
++- **[should-fix] データ検証の Operator にマジックナンバー、xlValidAlertStop が com-constants.md 未収載**
++  → 対応した。`Validation.Add` の第 3 引数（Operator）を `3` から `[Type]::Missing` に変更し再実行。
++  `xlValidAlertStop=1` を `skill/reference/com-constants.md`（条件付き書式・データ検証の節）に、
++  実測方法（`Validation.Add(3, 1, [Type]::Missing, 'A,B,C')` 実行後の `AlertStyle` 読み戻し）付きで
++  追加した。`patterns.md` の一次資料の記述も「com-constants.md にある」に修正した。
++- **[should-fix] AutoFit の説明・名前定義のクォート記述が実測範囲を超えている** → 対応した。
++  AutoFit は「`Worksheet.Columns` が返すのは Range であり、`AutoFit()` は行・列を表す Range に
++  対するメソッド」と正確化した。名前定義は、シート名を `Sheet1` からスペースと単引用符を含む
++  `"Sales O'Brien Q1"` に変えて再実測し、`.Replace("'", "''")` によるクォート二重化を追加した
++  スニペットに変更した。読み戻した `RefersTo` は渡した文字列と完全一致し、round 1 で見られた
++  「クォート不要な単純シート名では Excel が単引用符を自動的に外す」という正規化はこのケースでは
++  起きなかったことを確認欄に明記した（`Sheet1` の場合との違いという形で、一般化せず両方の実測事実を
++  残した）。
++
++再実行はすべて `verify-fixes.ps1`（`C:\Users\yoshi\AppData\Local\Temp\claude\...\scratchpad\`、
++フォアグラウンド、リポジトリ非同梱）で行い、実行後に `Get-Process -Name EXCEL` が空であることを
++確認した（EXCEL.EXE 残骸ゼロ）。`skill/scripts/XlsAgent.psm1` は今回も変更していないため Pester
++回帰は不要という判断を継続した。
++
+ ## 自己チェック
+ | # | 項目 | ○/× |
+ |---|---|---|
+-| G-05 | GetActiveObject を使っていない | |
+-| G-06 | COM は Invoke-XlsSession 内のみ | |
+-| G-09 | 保存は Save-XlsWorkbook のみ | |
+-| G-10 | 全殺しなし | |
+-| G-11 | 7 専用構文なし | |
+-| G-12 | 実行確認済みのみ収載 | |
++| G-05 | GetActiveObject を使っていない | ○ |
++| G-06 | COM は Invoke-XlsSession 内のみ | ○ |
++| G-08 | Value2 代入は [object[,]] のみ(スカラー代入なし) | ○(round 2 で 4 箇所の違反を修正・再実行済み) |
++| G-09 | 保存は Save-XlsWorkbook のみ | ○(今回は検証のみで保存自体を行っていない。Save-XlsWorkbook を経由しない直接保存は一切していない) |
++| G-10 | 全殺しなし | ○(Stop-Process 等は書いていない。Invoke-XlsSession の後始末に任せた) |
++| G-11 | 7 専用構文なし | ○ |
++| G-12 | 実行確認済みのみ収載 | ○(9 パターンすべてに日付・実機・確認方法を記載。round 2 で変更した 5 パターンは再実行し確認欄を更新済み) |
+diff --git a/harness/state/tasks/T-15.md b/harness/state/tasks/T-15.md
+new file mode 100644
+index 0000000..c33b8b7
+--- /dev/null
++++ b/harness/state/tasks/T-15.md
+@@ -0,0 +1,41 @@
++# T-15 SKILL.md 確定
++
++## 目的
++`skill/SKILL.md` のドラフトを、実装で得られた知見(T-01〜T-14 の実装メモ・レビューの gotchas)で確定版にする。
++01-design.md §4 の章立て(xlsx スキルと 1 対 1)に従う。
++
++## 入力
++- 参照ファイル: docs/01-design.md §4・§5、skill/SKILL.md(現ドラフト。章構成と「一字も変えず転記」済みの節は既にある)
++- 前提タスク: T-13, T-14(完了済み)
++- gotchas の原料: harness/state/tasks/T-02.md〜T-14.md の「踏んだ罠」節、harness/state/reviews/*.md の「SKILL.md gotchas 候補」節
++
++## 作業内容
++1. T-02〜T-14 の全タスクカードとレビューから gotchas 候補を収集・選別する。
++   - 載せる基準(01-design.md §5): Invoke-XlsSession で潰せるもの(新プロセス強制、ReadOnly 検出、STA、後始末)は載せない。エージェントが ScriptBlock の中で踏むものだけ。
++   - 選別した結果(採用/不採用と理由)を実装メモに一覧で記録。
++2. ドラフトの【要充填】箇所(COM gotchas 章)を確定させる。既存の候補箇条書きを実測済みの記述で更新・追補。
++   - 有力候補(タスクカードから): Value2 の読み 1-based/書き 0-based 非対称、単一セルもスカラーで返る、NumberFormat/Text/HasFormula の「一様ならスカラー・混在なら DBNull」、日付は NumberFormat 判定+Date1904 補正(Get/Set-XlsRange が吸収する旨)、Formula は非数式セルで値の文字列表現を返す(SpecialCells で判定)、動的配列は Formula2、Names.Add の RefersTo 自動正規化、`$script:Xl.xlErr*` は Value2 マーシャリング値、`return ,` が要る列挙可能戻り値、CSV/JSON 経由の型制約、Test-XlsFormulas.ps1 の timeoutSec を短くしすぎない、など。
++   - 分量に注意: SKILL.md はエージェントが毎回読むもの。gotchas は 1 項目 1〜2 行で 15 項目程度まで。細部は reference/ へ誘導。
++3. 実装した関数の実際のシグネチャ・挙動(refused、-Force、-AsJson、Clear-XlsOrphans の存在)と SKILL.md の記述を一致させる。
++4. Recalculate 章のコマンド例をこの環境の実態に合わせる(pwsh が無い環境では powershell -File でも可、と一行注記)。
++5. 冒頭表(Task / Approach)の関数名・使い方が最終実装と一致しているか照合。
++6. 「一字も変えず転記」指定の節(Requirements for every output、緑の検証警告)は変更しない(照合のみ)。
++
++## 成果物
++- `skill/SKILL.md`(確定版。DRAFT コメント除去)
++
++## 完了条件(Definition of Done)
++- [ ] 【要充填】・DRAFT マーカーが残っていない
++- [ ] 記述されたすべての関数シグネチャ・出力構造が実装と一致
++- [ ] gotchas がすべて実測・レビュー由来(出典タスクを実装メモに記録)
++- [ ] Codex レビューで blocking ゼロ
++
++## 実装メモ(Sonnet が記入)
++
++## 自己チェック
++| # | 項目 | ○/× |
++|---|---|---|
++| G-01 | 確定事項を変えていない | |
++| G-04 | recalc.py 契約の記述が正確 | |
++| G-11 | 例示コードが PS5.1 で動く構文 | |
++| G-12 | gotchas がすべて実測由来 | |
+diff --git a/skill/reference/com-constants.md b/skill/reference/com-constants.md
+index f92e8ef..4742433 100644
+--- a/skill/reference/com-constants.md
++++ b/skill/reference/com-constants.md
+@@ -67,6 +67,7 @@
+ | 名前 | 値 | 用途 | 確認 |
+ |---|---|---|---|
+ | xlValidateList | 3 | Range.Validation.Add の Type 引数 | 2026-08-18（T-13、実機。`Validation.Add(3, 1, 3, 'A,B,C')`（Type=3, AlertStyle=xlValidAlertStop, Operator は list では無視される）を実行後、`Range.Validation.Type` が 3 であることを確認） |
++| xlValidAlertStop | 1 | Range.Validation.Add の AlertStyle 引数（第 2 引数） | 2026-08-18（T-14 round 2、実機。`Validation.Add(3, 1, [Type]::Missing, 'A,B,C')` 実行後、`Range.Validation.AlertStyle` が 1 であることを確認。`patterns.md` のデータ検証パターンで、list 検証では使われない `Operator` にマジックナンバーを渡さず `[Type]::Missing` にした際に追加実測した） |
+ | xlCellValue | 1 | FormatConditions.Add の Type 引数 | 2026-08-18（T-13、実機。`FormatConditions.Add(1, 5, '=3')` を実行後、生成された FormatCondition の `.Type` が 1 であることを確認） |
+ | xlGreater | 5 | FormatConditions.Add の Operator 引数 | 2026-08-18（T-13、実機。上と同じ呼び出しで、生成された FormatCondition の `.Operator` が 5 であることを確認） |
+ 
+diff --git a/skill/reference/patterns.md b/skill/reference/patterns.md
+index 559e044..90771f1 100644
+--- a/skill/reference/patterns.md
++++ b/skill/reference/patterns.md
+@@ -3,29 +3,212 @@
+ <!-- T-14 で充填。各スニペットは Invoke-XlsSession の ScriptBlock 内で動作確認済みのものだけ載せる（G-12）。
+      形式: 見出し / 3 行以内の説明 / 5〜10 行のコード / 確認日 -->
+ 
++実行環境（全パターン共通）: 2026-08-18、実機、Excel `$app.Version`=`16.0` / `$app.Build`=`20228`
++（`Invoke-XlsSession` の `ScriptBlock` 内で `$app.Version`/`$app.Build` を読んで確認）。
++定数の値・出典は `skill/reference/com-constants.md` を参照。ここでは名前とマジックナンバーを
++コメントで併記するだけに留め、値の一次資料はそちらに置く。
++
+ ## Header row formatting
+-【要充填】
++
++ヘッダー行に太字・塗りつぶし・中央揃えを設定する。`Value2` への代入は 1 行分の `[object[,]]`
++（G-08）。`xlCenter` は `com-constants.md` で実測済み（T-13）。
++
++```powershell
++param($app, $wb)
++$ws = $wb.Worksheets.Item(1)
++$hdr = $ws.Range('A1:C1')
++$data = New-Object 'object[,]' 1,3
++$data[0,0] = 'Name'; $data[0,1] = 'Qty'; $data[0,2] = 'Price'
++$hdr.Value2 = $data
++$hdr.Font.Bold = $true
++$hdr.Interior.Color = 15773696   # 見た目用の任意 BGR Long（財務モデル色規約の値ではない）
++$hdr.HorizontalAlignment = -4108 # xlCenter（com-constants.md で実測済み）
++```
++
++確認: 2026-08-18（T-14、実機。`Invoke-XlsSession` 内で上記を実行した直後に同じ `ScriptBlock` の中で
++`$hdr.Font.Bold`（`True`）・`$hdr.Interior.Color`（`15773696`）・`$hdr.HorizontalAlignment`（`-4108`）・
++`$hdr.Value2[1,1]`（`'Name'`。複数セル範囲の `Value2` 読み取りは 1-based であることに注意）を
++読み戻して確認）。
+ 
+ ## Convert range to table (ListObjects.Add)
+-【要充填】
++
++セル範囲を `ListObjects`（Excel テーブル）に変換する。`SourceType`/`HasHeaders` の値は
++`com-constants.md` で実測済み（T-13）。
++
++```powershell
++param($app, $wb)
++$ws = $wb.Worksheets.Item(1)
++$data = New-Object 'object[,]' 3,2
++$data[0,0]='Item'; $data[0,1]='Amount'
++$data[1,0]='A'; $data[1,1]=10
++$data[2,0]='B'; $data[2,1]=20
++$ws.Range('A1:B3').Value2 = $data
++$lo = $ws.ListObjects.Add(1, $ws.Range('A1:B3'), [Type]::Missing, 1, [Type]::Missing, [Type]::Missing)
++# 引数: SourceType=xlSrcRange(1), Source=Range, [省略], HasHeaders=xlYes(1)
++$lo.Name = 'TblSample'
++```
++
++確認: 2026-08-18（T-14、実機。実行後に `$lo.SourceType`（`1`）・`$lo.HeaderRowRange.Value2[1,1]`
++（`'Item'`）・`$lo.HeaderRowRange.Value2[1,2]`（`'Amount'`）・`$lo.Range.Address($false,$false)`
++（`'A1:B3'`）を読み戻して確認）。
+ 
+ ## Auto-fit columns
+-【要充填】
++
++列幅をセル内容に合わせて自動調整する。`Worksheet.Columns`/`.Item(n)` が返すのは行・列全体を表す
++`Range` であり、`AutoFit()` は行または列を表す `Range` に対するメソッド（任意の `Range` に使える
++汎用メソッドではない）。`Value2` への代入は単一セルでも `[object[,]]`（G-08。レビュー指摘 T-14
++round 1 blocking 対応: 以前はスカラー代入だった）。
++
++```powershell
++param($app, $wb)
++$ws = $wb.Worksheets.Item(1)
++$data = New-Object 'object[,]' 1,1
++$data[0,0] = 'This is a fairly long piece of text for column width test'
++$ws.Range('A1').Value2 = $data
++$before = $ws.Columns.Item(1).ColumnWidth
++[void]$ws.Columns.Item(1).AutoFit()
++$after = $ws.Columns.Item(1).ColumnWidth
++```
++
++確認: 2026-08-18（T-14 round 2、実機。既定の列幅から長い文字列を `[object[,]]` で入れて `AutoFit()`
++を呼んだ結果、`ColumnWidth` が `8.38` → `50.5` に変化し、`$ws.Range('A1').Value2` が代入した文字列と
++一致することを確認。数値は既定テーマ・既定フォントでの実測値であり、フォント・DPI・テーマが変われば
++変わりうる一般的な傾向を示すものではない点に注意）。
+ 
+ ## Add a comment (legacy `AddComment` and threaded `AddCommentThreaded`)
+-【要充填】
++
++セルにコメントを付ける。従来型（レガシー）の `Range.AddComment` と、スレッド形式コメント
++`Range.AddCommentThreaded` の両方を試す。**この環境（Excel Version `16.0` / Build `20228`）では
++両方とも動作した**。他の Excel ビルドでは `AddCommentThreaded` が存在しない／失敗する可能性がある
++（タスクカード想定どおり。動かない環境に当たった場合はビルド番号とエラー内容をここに追記すること）。
++
++```powershell
++param($app, $wb)
++$ws = $wb.Worksheets.Item(1)
++$c1 = $ws.Range('A1')
++$cmt = $c1.AddComment('Legacy comment text')
++
++$c2 = $ws.Range('B1')
++$tc = $c2.AddCommentThreaded('Threaded comment text')
++```
++
++確認: 2026-08-18（T-14 round 2、実機、Excel Version `16.0` Build `20228`。コメント対象セルは空のまま
++（レビュー指摘 T-14 round 1 blocking 対応: 以前は `Value2 = 'legacy'` のようなスカラー代入で
++セル値を入れていたが G-08 違反のため削除。コメント自体の動作確認にセル値は不要）。
++`$c1.AddComment(...)` の戻り値 `Comment` の `.Text()`（引数なし呼び出しで現在のテキストを返す）が
++`'Legacy comment text'`、`$c2.AddCommentThreaded(...)` の戻り値 `CommentThreaded` の `.Text()` が
++`'Threaded comment text'` であることを確認。どちらも例外なく実行できた（両方とも `try/catch` で
++実行し、この環境では `catch` に入らなかった）。
+ 
+ ## Conditional formatting
+-【要充填】
++
++セルの値が条件を満たすと書式を変える。`FormatConditions.Add` の `Type`/`Operator` は
++`com-constants.md` で実測済み（T-13）。
++
++```powershell
++param($app, $wb)
++$ws = $wb.Worksheets.Item(1)
++$rng = $ws.Range('A1:A5')
++$data = New-Object 'object[,]' 5,1
++for ($i = 0; $i -lt 5; $i++) { $data[$i,0] = $i + 1 }
++$rng.Value2 = $data
++$fc = $rng.FormatConditions.Add(1, 5, '=3')  # Type=xlCellValue(1), Operator=xlGreater(5)
++$fc.Interior.Color = 65535                   # 黄色（BGR Long）
++```
++
++確認: 2026-08-18（T-14、実機。実行後に `$fc.Type`（`1`）・`$fc.Operator`（`5`）・`$fc.Formula1`
++（`'=3'`）・`$fc.Interior.Color`（`65535`）・`$rng.FormatConditions.Count`（`1`）を読み戻して確認）。
+ 
+ ## Data validation (list)
+-【要充填】
++
++セルに入力できる値をリストで制限する。`Validation.Add` の `Type`（xlValidateList=3）と `AlertStyle`
++（xlValidAlertStop=1）はどちらも `com-constants.md` に実測記録がある（xlValidateList は T-13、
++xlValidAlertStop は T-14 round 2 で追加）。`Operator` はリスト検証では使われないため、値を持たない
++マジックナンバーを渡さず `[Type]::Missing` にする（レビュー指摘 T-14 round 1 should-fix 対応）。
++
++```powershell
++param($app, $wb)
++$ws = $wb.Worksheets.Item(1)
++$cell = $ws.Range('A1')
++$cell.Validation.Add(3, 1, [Type]::Missing, 'A,B,C')
++# Type=xlValidateList(3), AlertStyle=xlValidAlertStop(1)
++```
++
++確認: 2026-08-18（T-14 round 2、実機。`Operator` を `[Type]::Missing` にした呼び出しに変更した上で
++再実行し、`$cell.Validation.Type`（`3`）・`$cell.Validation.AlertStyle`（`1`）・
++`$cell.Validation.Formula1`（`'A,B,C'`）を読み戻して確認）。
+ 
+ ## Insert a chart
+-【要充填】
++
++ワークシートに埋め込みグラフを挿入する。このパターンは成果物としてグラフを残すためのものなので、
++`com-constants.md` の実測作業（T-13）で使った `ChartObject.Delete()` による後始末はここでは行わない
++（レビュー指摘 T-14 round 1 should-fix 対応: 後始末目的の Delete を成果物編集用パターンに持ち込んで
++いた）。`ChartType` の値は `com-constants.md` で実測済み（T-13、xlColumnClustered=51）。
++
++```powershell
++param($app, $wb)
++$ws = $wb.Worksheets.Item(1)
++$data = New-Object 'object[,]' 3,2
++$data[0,0]='Q1'; $data[0,1]=10
++$data[1,0]='Q2'; $data[1,1]=20
++$data[2,0]='Q3'; $data[2,1]=15
++$ws.Range('A1:B3').Value2 = $data
++$chart = $ws.ChartObjects().Add(100, 10, 300, 200).Chart
++$chart.SetSourceData($ws.Range('A1:B3'))
++$chart.ChartType = 51  # xlColumnClustered
++```
++
++確認: 2026-08-18（T-14 round 2、実機。上記コードをそのまま実行し、`$ws.ChartObjects().Count` が
++実行前の `0` から実行後 `1`（+1）に増えたこと、`$chart.ChartType` の読み戻しが `51` であることを
++確認。グラフは削除せず残したままセッションを終える）。
+ 
+ ## Named ranges
+-【要充填】
++
++セルに名前を付けて数式や参照から使えるようにする。シート名を含む `RefersTo` はシート名を単引用符で
++囲み、シート名自体に単引用符が含まれる場合はそれを 2 つ重ねてエスケープする（`docs/01-design.md`
++§5 の「スペース入りシート名は数式内でクォート」と同じ理由。単引用符の二重化は round 1 の実測が
++`Sheet1`（クォート不要なシート名）でしか行われておらず、シート名に単引用符が含まれる場合の挙動を
++確認していなかったため round 2 で追加した。レビュー指摘 T-14 round 1 should-fix 対応）。
++`Value2` への代入は単一セルでも `[object[,]]`（G-08。レビュー指摘 T-14 round 1 blocking 対応:
++以前はスカラー代入だった）。
++
++```powershell
++param($app, $wb)
++$ws = $wb.Worksheets.Item(1)
++$ws.Name = "Sales O'Brien Q1"
++$data = New-Object 'object[,]' 1,1
++$data[0,0] = 42
++$ws.Range('A1').Value2 = $data
++$safeName = $ws.Name.Replace("'", "''")
++$refersTo = "='{0}'!`$A`$1" -f $safeName
++$wb.Names.Add('MyNamedCell', $refersTo)
++```
++
++確認: 2026-08-18（T-14 round 2、実機。シート名をスペースと単引用符の両方を含む `"Sales O'Brien Q1"`
++に変更し、`.Replace("'", "''")` で二重化してから組み立てた
++`$refersTo`（`"='Sales O''Brien Q1'!$A$1"`）を渡したところ、`$wb.Names.Item('MyNamedCell').RefersTo`
++の読み戻し値は渡した文字列と完全に一致した。round 1 で確認した「クォート不要な単純シート名
++（`Sheet1`）だと Excel が単引用符を自動的に取り除く」という正規化は、このケースでは起きなかった。
++シート名にスペースまたは単引用符が含まれ、クォートが実際に必要な場合は渡した文字列がそのまま
++保持されると見られる。`$ws.Range('MyNamedCell').Value2` が `42` であることも確認）。
+ 
+ ## Sheet add / copy / delete
+-【要充填】
++
++シートを追加・複製・削除する。`Worksheets.Delete()` は確認ダイアログを出しうるが、
++`Invoke-XlsSession` がセッション開始時に `DisplayAlerts=$false` を設定済みのため、ここで改めて
++設定し直す必要はない。
++
++```powershell
++param($app, $wb)
++$countStart = $wb.Worksheets.Count
++$newWs = $wb.Worksheets.Add()
++$newWs.Name = 'AddedSheet'
++$newWs.Copy([Type]::Missing, $wb.Worksheets.Item($wb.Worksheets.Count))
++$copiedWs = $wb.Worksheets.Item($wb.Worksheets.Count)
++$copiedWs.Name = 'CopiedSheet'
++$copiedWs.Delete()
++```
++
++確認: 2026-08-18（T-14、実機。新規ブック（シート 1 枚）から開始し、`$wb.Worksheets.Count` が
++`Add()` 後に `1`→`2`、`Copy()` 後に `2`→`3`、`Delete()` 後に `3`→`2` と推移することを確認。
++`$newWs.Name` が `'AddedSheet'` のまま残っていることも確認）。

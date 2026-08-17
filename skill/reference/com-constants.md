@@ -67,6 +67,7 @@
 | 名前 | 値 | 用途 | 確認 |
 |---|---|---|---|
 | xlValidateList | 3 | Range.Validation.Add の Type 引数 | 2026-08-18（T-13、実機。`Validation.Add(3, 1, 3, 'A,B,C')`（Type=3, AlertStyle=xlValidAlertStop, Operator は list では無視される）を実行後、`Range.Validation.Type` が 3 であることを確認） |
+| xlValidAlertStop | 1 | Range.Validation.Add の AlertStyle 引数（第 2 引数） | 2026-08-18（T-14 round 2、実機。`Validation.Add(3, 1, [Type]::Missing, 'A,B,C')` 実行後、`Range.Validation.AlertStyle` が 1 であることを確認。`patterns.md` のデータ検証パターンで、list 検証では使われない `Operator` にマジックナンバーを渡さず `[Type]::Missing` にした際に追加実測した） |
 | xlCellValue | 1 | FormatConditions.Add の Type 引数 | 2026-08-18（T-13、実機。`FormatConditions.Add(1, 5, '=3')` を実行後、生成された FormatCondition の `.Type` が 1 であることを確認） |
 | xlGreater | 5 | FormatConditions.Add の Operator 引数 | 2026-08-18（T-13、実機。上と同じ呼び出しで、生成された FormatCondition の `.Operator` が 5 であることを確認） |
 
