@@ -32,4 +32,10 @@
 | xlLine | 4 | Chart.ChartType | |
 | xlShiftDown | -4121 | Range.Insert | |
 | xlToRight | -4161 | Range.Insert | |
-| xlErrValue / xlErrRef 等 | 【要確認】 | CVErr 判定 | |
+| xlErrNull | -2146826288 | Range.Value2（エラーセルの生値、#NULL!） | 2026-08-17（T-06 Get-XlsRange、実機。`=SUM(1:1 2:2)` で確認） |
+| xlErrDiv0 | -2146826281 | Range.Value2（エラーセルの生値、#DIV/0!） | 2026-08-17（T-06 Get-XlsRange、実機。`=1/0` で確認） |
+| xlErrValue | -2146826273 | Range.Value2（エラーセルの生値、#VALUE!） | 2026-08-17（T-06 Get-XlsRange、実機。`=1/""` で確認） |
+| xlErrRef | -2146826265 | Range.Value2（エラーセルの生値、#REF!） | 2026-08-17（T-06 Get-XlsRange、実機。`=#REF!` で確認） |
+| xlErrName | -2146826259 | Range.Value2（エラーセルの生値、#NAME?） | 2026-08-17（T-06 Get-XlsRange、実機。`=NoSuchName` で確認） |
+| xlErrNum | -2146826252 | Range.Value2（エラーセルの生値、#NUM!） | 2026-08-17（T-06 Get-XlsRange、実機。`=SQRT(-1)` で確認） |
+| xlErrNA | -2146826246 | Range.Value2（エラーセルの生値、#N/A） | 2026-08-17（T-06 Get-XlsRange、実機。`=NA()` で確認） |

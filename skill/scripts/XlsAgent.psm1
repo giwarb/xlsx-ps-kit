@@ -33,6 +33,30 @@ $script:Xl = @{
     xlOpenXMLTemplate = 54
     xlOpenXMLTemplateMacroEnabled = 53
     xlCSV = 6
+
+    # T-06 Get-XlsRange: Range.Value2 がエラーセルを返すときの生値。実機で確認済み（実装メモ参照）:
+    # Value2 の .NET 型がそのままセル種別を表し、エラー値だけが [int]（数値・日付は必ず [double]）に
+    # なるため、この型判定だけでエラー値を一意に検出できる。値そのものは CVErr の Long 表現。
+    xlErrNull  = -2146826288
+    xlErrDiv0  = -2146826281
+    xlErrValue = -2146826273
+    xlErrRef   = -2146826265
+    xlErrName  = -2146826259
+    xlErrNum   = -2146826252
+    xlErrNA    = -2146826246
+}
+
+# T-06 Get-XlsRange: $script:Xl の xlErr* 値 -> 表示文字列。ConvertFrom-XlsValue2 が参照する
+# 実務上のルックアップテーブル（$script:Xl 自体は「確認済みの名前付き定数」を集約する場所という
+# 既存の役割を保つため、表示文字列マッピングはここに分離した）。
+$script:XlValue2ErrorCodes = @{
+    $script:Xl.xlErrNull  = '#NULL!'
+    $script:Xl.xlErrDiv0  = '#DIV/0!'
+    $script:Xl.xlErrValue = '#VALUE!'
+    $script:Xl.xlErrRef   = '#REF!'
+    $script:Xl.xlErrName  = '#NAME?'
+    $script:Xl.xlErrNum   = '#NUM!'
+    $script:Xl.xlErrNA    = '#N/A'
 }
 
 if (-not ('XlsAgent.NativeMethods' -as [type])) {
@@ -274,6 +298,17 @@ function Invoke-XlsSession {
         すべての COM 操作はこの関数の中（または内部ヘルパー Start-XlsApplication/Stop-XlsApplication）に
         限定すること（G-06）。ScriptBlock の外へ Application/Workbook を持ち出して使い続けてはならない。
 
+        **戻り値の契約（T-06 round 2 レビュー指摘対応で明文化）**: `ScriptBlock` の実行結果は
+        「非列挙の単一の値」として扱い、そのまま Invoke-XlsSession 自身の戻り値にする。つまり
+        `ScriptBlock` が配列（例えば要素数 1 のジャグ配列）を最後に返した場合、その配列は分解されずに
+        1 個の値として呼び出し元に渡る。これは 01-design.md §3.1「戻り値: ScriptBlock の戻り値を
+        そのまま返す」を配列にも一貫させるための意図的な契約であり、パイプラインのストリーム透過性
+        （`ScriptBlock` が `1; 2` のように複数回出力した場合にそれぞれを別オブジェクトとして
+        `Invoke-XlsSession | ForEach-Object` へ渡す、という意味の透過性）は保証しない
+        （`ScriptBlock` の複数出力はすべて 1 個の `object[]` にまとめられて返る）。
+        `tests/Invoke-XlsSession.Tests.ps1` にスカラー・要素数 1 の配列・要素数 2 以上の配列・
+        複数回のパイプライン出力の 4 パターンを固定するテストがある。
+
         後始末は必ず finally で行う: Workbook.Close(SaveChanges:=$false) -> Stop-XlsApplication
         （内部で Application.Quit -> Release(Workbook) -> Release(Application) -> GC x2）-> マーカー
         リース解放 -> マーカー削除。
@@ -366,7 +401,16 @@ function Invoke-XlsSession {
         # かつ ScriptBlock を呼ぶ前のこのタイミングで設定する（Codex レビュー承認済みの順序）。
         $app.Calculation = $script:Xl.xlCalculationManual
 
-        return & $ScriptBlock $app $wb
+        # 罠（T-06 で発見、実機確認。実装メモ参照）: `return & $ScriptBlock $app $wb` だと、
+        # ScriptBlock の戻り値が「要素数 1 の配列」のとき、PowerShell の `return`（内部的には
+        # Write-Output と同じ 1 段階だけ配列を展開する挙動）がその外側の配列を剥がしてしまい、
+        # 呼び出し元には配列の中身（さらにそれ自体が配列なら、その要素）がそのまま渡ってしまう
+        # （T-03 の受け入れ要点 (d)「戻り値が透過する」は、それまで文字列などスカラーでしか
+        # 検証されておらず、この不具合は T-06 の Get-XlsRange が単一行・単一セルのジャグ配列を
+        # 返すまで踏まれていなかった）。単項カンマで 1 段階だけ包み直すことで、`&` 呼び出しの結果を
+        # スカラーならそのまま、配列ならその配列を要素数によらず 1 個の戻り値として透過させる
+        # （このファイル内の Clear-XlsOrphans の `return , $results` と同じ、既存の確立済みパターン）。
+        return , (& $ScriptBlock $app $wb)
     }
     finally {
         # Close -> Quit -> Release(Workbook -> Application の逆順) -> GC x2 の順（01-design.md §3.1）。
@@ -633,22 +677,800 @@ function Get-XlsModel {
     throw 'Get-XlsModel は未実装です（T-08 で実装予定）。'
 }
 
+function Split-XlsNumberFormatSections {
+    <#
+    .SYNOPSIS
+        NumberFormat 文字列を、引用符リテラル・バックスラッシュエスケープの外側にある ';' で
+        最大 4 セクション（正数;負数;ゼロ;テキスト）に分割する。COM は触らない純粋関数。
+        Test-XlsIsDateNumberFormat の内部ヘルパー（T-06 round 2）。Export しない。
+    .PARAMETER NumberFormat
+        分割対象の書式文字列。
+    .EXAMPLE
+        Split-XlsNumberFormatSections -NumberFormat 'm/d/yyyy;@'
+    .NOTES
+        round 2 レビュー指摘（blocking）対応: Excel の書式コードは最大 4 セクション
+        （正数;負数;ゼロ;テキスト）を持てる（Microsoft の書式仕様どおり）。セクション数が 1 なら
+        すべての値に同じ書式、2 なら 正数&ゼロ;負数、3 なら 正数;負数;ゼロ、4 なら
+        正数;負数;ゼロ;テキスト。区切りの ';' は、引用符で囲まれた文字リテラルの中や
+        バックスラッシュエスケープの直後には現れないものとして扱う（その中の ';' はセクション
+        区切りにしない）。
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$NumberFormat
+    )
+
+    $sections = New-Object System.Collections.ArrayList
+
+    if ([string]::IsNullOrEmpty($NumberFormat)) {
+        [void]$sections.Add('')
+        return , $sections.ToArray()
+    }
+
+    $current = New-Object Text.StringBuilder
+    $i = 0
+    $len = $NumberFormat.Length
+    while ($i -lt $len) {
+        $ch = $NumberFormat[$i]
+        if ($ch -eq '"') {
+            [void]$current.Append($ch)
+            $i++
+            while ($i -lt $len -and $NumberFormat[$i] -ne '"') {
+                [void]$current.Append($NumberFormat[$i])
+                $i++
+            }
+            if ($i -lt $len) {
+                [void]$current.Append($NumberFormat[$i])
+                $i++
+            }
+        }
+        elseif ($ch -eq '\' -and ($i + 1) -lt $len) {
+            [void]$current.Append($ch)
+            [void]$current.Append($NumberFormat[$i + 1])
+            $i += 2
+        }
+        elseif ($ch -eq ';') {
+            [void]$sections.Add($current.ToString())
+            $current = New-Object Text.StringBuilder
+            $i++
+        }
+        else {
+            [void]$current.Append($ch)
+            $i++
+        }
+    }
+    [void]$sections.Add($current.ToString())
+
+    return , $sections.ToArray()
+}
+
+function Get-XlsNumberFormatSectionCondition {
+    <#
+    .SYNOPSIS
+        セクション文字列の先頭にある条件トークン（例 [<100]、[>=100]）を解析する。条件トークンが
+        なければ $null を返す。COM は触らない純粋関数。Select-XlsNumberFormatSection の内部ヘルパー
+        （T-06 round 3）。Export しない。
+    .PARAMETER Section
+        判定対象の 1 セクション分の書式文字列（Split-XlsNumberFormatSections の要素 1 つ）。
+    .EXAMPLE
+        Get-XlsNumberFormatSectionCondition -Section '[<100]0.00'
+    .NOTES
+        round 2 レビュー指摘（blocking）対応。Excel の条件付き書式（Microsoft の書式仕様どおり）は、
+        セクション先頭の角括弧に比較演算子（<, >, <=, >=, =, <>）と数値を書くことで、既定の
+        正数/負数/ゼロによるセクション振り分けを置き換える。セクション先頭から角括弧トークンを
+        順に見ていき、比較演算子+数値のパターンに一致する最初のものを条件として採用する
+        （色 `[Red]` やロケール/通貨コード `[$-411]` 等、条件でない角括弧トークンはスキップして
+        次の角括弧を見る）。
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$Section
+    )
+
+    if ([string]::IsNullOrEmpty($Section)) {
+        return $null
+    }
+
+    $i = 0
+    $len = $Section.Length
+    while ($i -lt $len -and $Section[$i] -eq '[') {
+        $close = $Section.IndexOf(']', $i)
+        if ($close -lt 0) {
+            return $null
+        }
+        $token = $Section.Substring($i + 1, $close - $i - 1)
+        if ($token -match '^(?<op><=|>=|<>|<|>|=)\s*(?<num>-?\d+(\.\d+)?)$') {
+            return [PSCustomObject]@{
+                Operator = $Matches['op']
+                Number   = [double]$Matches['num']
+            }
+        }
+        $i = $close + 1
+    }
+
+    return $null
+}
+
+function Test-XlsNumberFormatConditionMatches {
+    <#
+    .SYNOPSIS
+        Get-XlsNumberFormatSectionCondition が返した条件オブジェクトに、対象の値が一致するかを
+        判定する。COM は触らない純粋関数。Select-XlsNumberFormatSection の内部ヘルパー
+        （T-06 round 3）。Export しない。
+    .PARAMETER Condition
+        Get-XlsNumberFormatSectionCondition の戻り値（Operator/Number を持つオブジェクト）。
+    .PARAMETER Value
+        判定対象の数値。
+    .EXAMPLE
+        Test-XlsNumberFormatConditionMatches -Condition $cond -Value 45000
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        $Condition,
+
+        [double]$Value = 0
+    )
+
+    switch ($Condition.Operator) {
+        '<' { return [bool]($Value -lt $Condition.Number) }
+        '>' { return [bool]($Value -gt $Condition.Number) }
+        '<=' { return [bool]($Value -le $Condition.Number) }
+        '>=' { return [bool]($Value -ge $Condition.Number) }
+        '=' { return [bool]($Value -eq $Condition.Number) }
+        '<>' { return [bool]($Value -ne $Condition.Number) }
+    }
+
+    return $false
+}
+
+function Select-XlsNumberFormatSection {
+    <#
+    .SYNOPSIS
+        Split-XlsNumberFormatSections が返したセクション配列から、対象の値に適用されるセクションを
+        1 つ選ぶ。COM は触らない純粋関数。Test-XlsIsDateNumberFormat の内部ヘルパー（T-06 round 2、
+        条件付きセクション対応は round 3）。Export しない。
+    .PARAMETER Sections
+        Split-XlsNumberFormatSections の戻り値。
+    .PARAMETER Value
+        対象の数値（符号、または各セクションの条件でどのセクションを使うか決める）。
+    .EXAMPLE
+        Select-XlsNumberFormatSection -Sections $sections -Value -5.0
+    .NOTES
+        round 2 レビュー指摘（blocking）対応: Excel では `[<100]0.00;[>=100]yyyy-mm-dd` のように、
+        セクション先頭の条件トークンが既定の符号による振り分けを置き換える（Microsoft の書式仕様
+        どおり）。いずれかのセクションに条件トークンがあれば、まずそちらを優先する:
+          1. 各セクションの条件を先頭から順に評価し、最初に値が一致したセクションを返す。
+          2. どの条件にも一致しなければ、条件を持たない（無条件の）セクションを catch-all として
+             返す（Excel の規則: 条件付きセクションが埋まらない残りの 1 セクションが無条件の
+             フォールバックになる）。
+          3. すべてのセクションに条件があり、かつどれにも一致しない場合は `$null` を返す
+             （round 3 レビュー指摘 blocking 対応: 以前は「仕様上まず起こらない縮退ケース」として
+             `$Sections[0]` にフォールバックしていたが、これは偽だった条件付きセクションへ戻って
+             しまう誤り。例 `'[<0]yyyy-mm-dd;[>100]0.00'` と値 `50` は、どちらの条件も偽であり、
+             Excel はどちらの数値表示も適用しない。第 1 条件（`<0`）へ戻って日付として解釈するのは
+             誤変換であり、`$Sections[0]` を機械的に返す実装判断では正しさを保てないと判明した。
+             呼び出し元の `Test-XlsFormatSectionHasDateToken` は `$null`/空文字列を安全に「日付でない」
+             として扱う）。
+        いずれのセクションにも条件トークンがない場合だけ、従来どおり符号による既定の振り分け
+        （セクション数が 1 なら常にそのセクション。2 なら 正数&ゼロ=1 番目、負数=2 番目。3 以上
+        （4 番目はテキスト用で今回対象の [double] の判定には使わない）なら 正数=1 番目、
+        負数=2 番目、ゼロ=3 番目）を使う。
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [string[]]$Sections,
+
+        [double]$Value = 0
+    )
+
+    $conditions = New-Object System.Collections.ArrayList
+    foreach ($section in $Sections) {
+        [void]$conditions.Add((Get-XlsNumberFormatSectionCondition -Section $section))
+    }
+
+    $hasAnyCondition = $false
+    foreach ($cond in $conditions) {
+        if ($null -ne $cond) {
+            $hasAnyCondition = $true
+            break
+        }
+    }
+
+    if ($hasAnyCondition) {
+        for ($i = 0; $i -lt $Sections.Count; $i++) {
+            $cond = $conditions[$i]
+            if ($null -ne $cond -and (Test-XlsNumberFormatConditionMatches -Condition $cond -Value $Value)) {
+                return $Sections[$i]
+            }
+        }
+        for ($i = 0; $i -lt $Sections.Count; $i++) {
+            if ($null -eq $conditions[$i]) {
+                return $Sections[$i]
+            }
+        }
+        # round 3 レビュー指摘（blocking）対応: すべて条件付きでどれにも一致しない場合、
+        # 偽だった条件へ戻らず $null を返す（.NOTES 参照）。
+        return $null
+    }
+
+    $count = $Sections.Count
+    if ($count -le 1) {
+        return $Sections[0]
+    }
+    if ($count -eq 2) {
+        if ($Value -lt 0) { return $Sections[1] }
+        return $Sections[0]
+    }
+    if ($Value -gt 0) { return $Sections[0] }
+    if ($Value -lt 0) { return $Sections[1] }
+    return $Sections[2]
+}
+
+function Test-XlsFormatSectionHasDateToken {
+    <#
+    .SYNOPSIS
+        書式コード 1 セクション分の文字列に、日付/時刻トークン（d/m/y/h/s、または [h]/[m]/[s] 系の
+        経過時間トークン）が「リテラルとして除外されずに」含まれるかを判定する。COM は触らない
+        純粋関数。Test-XlsIsDateNumberFormat の内部ヘルパー（T-06 round 2）。Export しない。
+    .PARAMETER Section
+        判定対象の 1 セクション分の書式文字列（Split-XlsNumberFormatSections の要素 1 つ）。
+    .EXAMPLE
+        Test-XlsFormatSectionHasDateToken -Section 'm/d/yyyy'
+    .NOTES
+        round 2 レビュー指摘（blocking）対応: 引用符で囲まれた文字リテラル（例 "USD"）、
+        バックスラッシュエスケープの次の 1 文字（例 `0\m` の m はリテラルの m であって月ではない）、
+        アンダースコアの次の 1 文字（幅合わせのスペーサー）、アスタリスクの次の 1 文字（繰り返し
+        埋め文字）は、日付トークンとして数えない。角括弧 `[...]` は、中身が `h`/`hh`/`m`/`mm`/`s`/
+        `ss`（大文字小文字問わず）のときだけ経過時間トークンとして日付/時刻扱いにし、それ以外
+        （色指定 `[Red]`、ロケール/通貨コード `[$-411]`、条件 `[>100]` 等）は読み飛ばして中身の
+        文字を判定に使わない（`[Red]` の d、`[Yellow]` の y 等による誤検出を防ぐ）。
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$Section
+    )
+
+    if ([string]::IsNullOrEmpty($Section)) {
+        return $false
+    }
+
+    $i = 0
+    $len = $Section.Length
+    while ($i -lt $len) {
+        $ch = $Section[$i]
+
+        if ($ch -eq '"') {
+            $i++
+            while ($i -lt $len -and $Section[$i] -ne '"') { $i++ }
+            $i++
+        }
+        elseif ($ch -eq '\') {
+            $i += 2
+        }
+        elseif ($ch -eq '_') {
+            $i += 2
+        }
+        elseif ($ch -eq '*') {
+            $i += 2
+        }
+        elseif ($ch -eq '[') {
+            $close = $Section.IndexOf(']', $i)
+            if ($close -lt 0) {
+                $i = $len
+            }
+            else {
+                $token = $Section.Substring($i + 1, $close - $i - 1)
+                if ($token -match '^[hHmMsS]+$') {
+                    return $true
+                }
+                $i = $close + 1
+            }
+        }
+        else {
+            if ($ch -match '[dmyhsDMYHS]') {
+                return $true
+            }
+            $i++
+        }
+    }
+
+    return $false
+}
+
+function Test-XlsIsDateNumberFormat {
+    <#
+    .SYNOPSIS
+        NumberFormat 文字列が（対象の値にとって）日付/時刻書式かどうかを判定する。COM は触らない
+        純粋関数。ConvertFrom-XlsValue2（T-06）の内部ヘルパー。Export しない。
+    .PARAMETER NumberFormat
+        判定対象の Range.NumberFormat 文字列。
+    .PARAMETER Value
+        判定対象の数値。Excel の書式は最大 4 セクション（正数;負数;ゼロ;テキスト）を持てるため、
+        どのセクションを見るかは値の符号で決まる（省略時は 0 として扱い、正数/ゼロ用のセクションを
+        見る）。
+    .EXAMPLE
+        Test-XlsIsDateNumberFormat -NumberFormat 'm/d/yyyy;@' -Value 45000
+    .NOTES
+        round 2 レビュー指摘（blocking）対応: 旧実装は書式文字列のどこかに `@` があるだけで
+        一律 `$false` にしていたため、`m/d/yyyy;@`（正数&ゼロ用は日付、負数用はテキスト）のような
+        ごく一般的な複数セクション書式を非日付と誤判定していた。また角括弧を一律に除去していたため
+        `[h]` 単独の経過時間書式を見落とし、逆にバックスラッシュエスケープ（例 `0\m`）を誤って
+        日付と判定していた。値に対応するセクションだけを Select-XlsNumberFormatSection で選び、
+        Test-XlsFormatSectionHasDateToken でリテラル除外込みのトークン判定をする方式に改めた。
+
+        罠（実機確認）: 既定の「標準」書式は Range.NumberFormat（本来カルチャ非依存のはずの
+        プロパティ）でも、日本語ロケールの Excel では英語の "General" ではなく "G/標準" として
+        返ってくることを確認した。"General"/"G/標準" いずれも d/m/y/h/s トークンを含まないため、
+        本関数はリテラル比較をせずトークン判定だけで両方とも正しく非日付と判定する。
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$NumberFormat,
+
+        [double]$Value = 0
+    )
+
+    if ([string]::IsNullOrEmpty($NumberFormat)) {
+        return $false
+    }
+
+    $sections = Split-XlsNumberFormatSections -NumberFormat $NumberFormat
+    $section = Select-XlsNumberFormatSection -Sections $sections -Value $Value
+
+    return Test-XlsFormatSectionHasDateToken -Section $section
+}
+
+function ConvertTo-XlsIsoDateString {
+    <#
+    .SYNOPSIS
+        Excel の日付シリアル値（Value2、1900 または 1904 日付体系）を ISO 8601 文字列に変換する。
+        変換できない場合（OADate の有効範囲外）は $null を返す。COM は触らない純粋関数。
+        ConvertFrom-XlsValue2 の内部ヘルパー（T-06 round 2）。Export しない。
+    .PARAMETER OleAutomationValue
+        Range.Value2 の生値（日付として解釈する Double）。
+    .PARAMETER Date1904
+        対象ワークブックが 1904 日付体系（Workbook.Date1904 = $true）かどうか。
+    .EXAMPLE
+        ConvertTo-XlsIsoDateString -OleAutomationValue 45000
+    .NOTES
+        round 2 レビュー指摘（blocking）対応。実機で確認した Excel シリアル値と
+        [DateTime]::FromOADate() の差異（新規ワークブックのセルに直接シリアル値を入れ、
+        Range.Text の表示と比較して確認。実装メモ参照）:
+          - 1904 日付体系（Workbook.Date1904=$true）: Excel のシリアル値に 1462 を足すと
+            .NET の OADate と一致する（1900 年始まりの OADate 基準と 1904 年始まりの Excel 基準の
+            差。実機で serial 0/1/59/60/61/367 を確認し、すべて +1462 で Range.Text と一致した。
+            1904 年は実際に閏年のため、下記の 1900 年体系のような架空日の補正は不要）。
+          - 1900 日付体系（既定）: シリアル 1〜59（1900-01-01〜1900-02-28）は .NET の OADate より
+            1 小さいため +1 の補正が要る。Excel は Lotus 1-2-3 互換のため 1900 年を閏年として扱う
+            バグを意図的に継承しているが、.NET 側の OADate 基準はこのバグを持たないため、
+            serial 61（1900-03-01）以降はこの補正をすると逆にずれる（補正なしで Range.Text と
+            一致する）。実機で serial 1/2/59/60/61/367 を確認した。
+          - シリアル 60 は Excel 上で "1900-02-29" と表示される架空の日付で、実在しないため
+            .NET の DateTime では表現できない（FromOADate はこの日を作れない）。ここでは情報を
+            失わないよう、Excel が表示する文字列をそのまま使う（整数部が 60 の間は "1900-02-29" を
+            使い、端数（時刻）があれば ISO 形式で付加する。実装判断）。
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [double]$OleAutomationValue,
+
+        [switch]$Date1904
+    )
+
+    $oaValue = $OleAutomationValue
+
+    if ($Date1904) {
+        $oaValue += 1462.0
+    }
+    elseif ($oaValue -ge 60.0 -and $oaValue -lt 61.0) {
+        # 実在しない 1900-02-29（Excel が意図的に継承した架空の閏日）。.NOTES 参照。
+        $fractionalDay = $oaValue - 60.0
+        if ($fractionalDay -eq 0.0) {
+            return '1900-02-29'
+        }
+        $timeOfDay = [TimeSpan]::FromDays($fractionalDay)
+        return ('1900-02-29T{0}' -f $timeOfDay.ToString('hh\:mm\:ss'))
+    }
+    elseif ($oaValue -ge 1.0 -and $oaValue -lt 60.0) {
+        $oaValue += 1.0
+    }
+
+    try {
+        $dt = [DateTime]::FromOADate($oaValue)
+    }
+    catch {
+        # 罠: 日付書式のセルだが OADate の有効範囲外（おおよそ西暦 100 年〜9999 年の外）の値。
+        # 変換できないため呼び出し元に $null を返し、生の数値のまま使ってもらう（実装判断）。
+        return $null
+    }
+
+    if ($dt.TimeOfDay -eq [TimeSpan]::Zero) {
+        return $dt.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture)
+    }
+    return $dt.ToString('yyyy-MM-ddTHH:mm:ss', [Globalization.CultureInfo]::InvariantCulture)
+}
+
+function ConvertFrom-XlsValue2 {
+    <#
+    .SYNOPSIS
+        Range.Value2 の 1 セル分の生値を、日付・空セル・エラー値の変換規則に従って PowerShell の値に
+        変換する。COM は一切触らない純粋関数。Get-XlsRange の内部関数（T-06）。T-07/T-08 も再利用する
+        想定でこのシグネチャにしている（呼び出し側が Value2 と NumberFormat を渡すだけで済み、
+        呼び出し側自身は COM オブジェクトを渡す必要がない）。Export しない。
+    .PARAMETER Value2
+        セル 1 つ分の Range.Value2（$null=空セル、[double]=数値/日付、[string]=文字列、[bool]=真偽値、
+        [int]=エラー値のいずれか）。
+    .PARAMETER NumberFormat
+        そのセルの Range.NumberFormat（日付判定に使う）。意味を持たない場合は空文字列でよい。
+    .PARAMETER Date1904
+        対象ワークブックが 1904 日付体系（Workbook.Date1904 = $true）かどうか（round 2 レビュー
+        指摘対応で追加。省略時は既定の 1900 日付体系として扱う）。
+    .EXAMPLE
+        ConvertFrom-XlsValue2 -Value2 45000 -NumberFormat 'm/d/yyyy'
+    .NOTES
+        変換規則（01-design.md §3.5、実機確認。実装メモに実測の詳細を記録）:
+          - $null（空セル）はそのまま $null。
+          - Value2 の .NET 型がそのままセルの種別を表す（実機確認、COM marshaling の性質）:
+            数値・日付は必ず [double]（整数値でも [int] にはならない）、文字列は [string]、
+            論理値は [bool]、エラー値だけが [int]（CVErr の Long 表現、例: #DIV/0! = -2146826281）。
+            この型だけでエラー値かどうかを一意に判定でき、値の大小や別途のフラグ取得が要らない。
+          - [double] かつ NumberFormat が日付/時刻書式（Test-XlsIsDateNumberFormat。値の符号で
+            セクションを選ぶため `-Value $Value2` を渡す）なら ConvertTo-XlsIsoDateString で
+            ISO 8601 文字列にする（Date1904・1900 年 1〜2 月の架空閏日の補正込み）。
+          - [int] はエラー値。$script:XlValue2ErrorCodes にある既知 7 種（NULL/DIV0/VALUE/REF/NAME/
+            NUM/N-A）は "#REF!" 等の表示文字列に変換する。未知のコード（新しい動的配列エラー
+            #SPILL!/#CALC! 等、未確認）は情報を失わず "#ERR(<code>)" にフォールバックする
+            （数式エラーの厳密な検証は T-10 の Test-XlsFormulas の責務であり、ここでは「読める」ことを
+            優先する。実装判断）。
+          - それ以外（文字列・真偽値・日付でない数値・OADate 範囲外の日付書式値）はそのまま返す。
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowNull()]
+        $Value2,
+
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$NumberFormat,
+
+        [switch]$Date1904
+    )
+
+    if ($null -eq $Value2) {
+        return $null
+    }
+
+    if ($Value2 -is [int]) {
+        if ($script:XlValue2ErrorCodes.ContainsKey($Value2)) {
+            return $script:XlValue2ErrorCodes[$Value2]
+        }
+        return "#ERR($Value2)"
+    }
+
+    if ($Value2 -is [double] -and (Test-XlsIsDateNumberFormat -NumberFormat $NumberFormat -Value $Value2)) {
+        $iso = ConvertTo-XlsIsoDateString -OleAutomationValue $Value2 -Date1904:$Date1904
+        if ($null -ne $iso) {
+            return $iso
+        }
+        return $Value2
+    }
+
+    return $Value2
+}
+
+function ConvertFrom-XlsRangeToRows {
+    <#
+    .SYNOPSIS
+        Range COM オブジェクトから Value2 を一括取得し、ConvertFrom-XlsValue2 を適用したジャグ配列
+        （行の配列の配列）にして返す。Get-XlsRange（T-06）の内部関数。COM は Range オブジェクトの
+        プロパティ読み取りのみを行う（Invoke-XlsSession の ScriptBlock 内から呼ばれる前提。G-06）。
+        Export しない。
+    .PARAMETER RangeObj
+        対象の Range COM オブジェクト（Worksheet.Range(...) の戻り値）。
+    .PARAMETER Date1904
+        対象ワークブックが 1904 日付体系（Workbook.Date1904 = $true）かどうか（round 2 レビュー
+        指摘対応で追加。呼び出し側が Worksheet.Parent.Date1904 を 1 回読んで渡す想定）。
+    .EXAMPLE
+        ConvertFrom-XlsRangeToRows -RangeObj $ws.Range('A1:C10')
+    .NOTES
+        罠（実機確認）:
+          - 単一セル範囲は Value2 が 2 次元配列でなくスカラーで返る（01-design.md §5 既知の罠）。
+            `$raw -is [Array]` で判定して分岐する。
+          - Range.Value2 が返す 2 次元配列は .NET の既定である 0-based ではなく、Excel の
+            Range.Cells(1,1) 起点に合わせて 1-based（GetLowerBound(0)/(1) がともに 1）で
+            marshaling される。0 起点を仮定して `$raw[0,0]` のようにアクセスすると
+            IndexOutOfRangeException になる。GetLowerBound/GetUpperBound で実際の境界を
+            取得してループすること（Range.Value2 への**書き込み**側は逆に 0-based の
+            [object[,]] で問題なく受け付ける非対称な挙動も実機で確認した。読みと書きで前提が
+            違う点に注意）。
+          - Range.NumberFormat は Value2 と違い、複数セルの範囲を一括で 2 次元配列にできない。
+            範囲内の書式がすべて同一ならスカラー文字列 1 個、1 つでも異なれば [DBNull]::Value を
+            返す（実機確認）。まず一括読みを試し、DBNull のときだけセル単位
+            （`Range.Cells.Item(r,c).NumberFormat`。Value2 の 2 次元配列と同じ、範囲左上を (1,1)
+            とする相対 1-based インデックスであることを実機で確認済み）にフォールバックする。
+            書式が範囲全体で統一されている（よくあるケース）なら COM 呼び出し 1 回で済み、
+            混在時のみセル数分の呼び出しになる（大きい範囲で書式が細かく混在していると遅くなりうる
+            既知の制約。列単位の最適化は今回のスコープでは見送った。実装メモ参照）。
+          - round 2 レビュー指摘（should-fix）対応: DBNull フォールバック時のセル単位
+            NumberFormat 取得は、日付判定に使う `[double]` のセルだけに限定する（文字列・空セル・
+            真偽値・エラー値は日付判定が不要で、NumberFormat を読んでも捨てるだけの無駄な COM
+            呼び出しになるため）。ヘッダー行が既定書式・本文が日付書式という典型的な表でも、
+            `[double]` セルだけに絞ることで無駄な呼び出しを避けられる。
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        $RangeObj,
+
+        [switch]$Date1904
+    )
+
+    $raw = $RangeObj.Value2
+    $rows = New-Object System.Collections.ArrayList
+
+    if ($raw -isnot [Array]) {
+        # 単一セル範囲（罠、.NOTES 参照）。NumberFormat は真の単一セルなら常にスカラー文字列。
+        $nf = $RangeObj.NumberFormat
+        $row = New-Object System.Collections.ArrayList
+        [void]$row.Add((ConvertFrom-XlsValue2 -Value2 $raw -NumberFormat $nf -Date1904:$Date1904))
+        [void]$rows.Add($row.ToArray())
+        return , $rows.ToArray()
+    }
+
+    $rowLower = $raw.GetLowerBound(0)
+    $rowUpper = $raw.GetUpperBound(0)
+    $colLower = $raw.GetLowerBound(1)
+    $colUpper = $raw.GetUpperBound(1)
+
+    $bulkFormat = $RangeObj.NumberFormat
+    $useUniformFormat = ($null -ne $bulkFormat -and $bulkFormat -isnot [DBNull])
+    $uniformFormat = if ($useUniformFormat) { $bulkFormat } else { $null }
+
+    for ($r = $rowLower; $r -le $rowUpper; $r++) {
+        $row = New-Object System.Collections.ArrayList
+        for ($c = $colLower; $c -le $colUpper; $c++) {
+            $cellValue = $raw[$r, $c]
+
+            # round 2 レビュー指摘（should-fix）: NumberFormat が日付判定に使われるのは [double] の
+            # ときだけなので、それ以外の型ではセル単位の COM 呼び出しを発生させない（.NOTES 参照）。
+            $nf = ''
+            if ($cellValue -is [double]) {
+                if ($useUniformFormat) {
+                    $nf = $uniformFormat
+                }
+                else {
+                    $nf = $RangeObj.Cells.Item($r, $c).NumberFormat
+                }
+            }
+
+            [void]$row.Add((ConvertFrom-XlsValue2 -Value2 $cellValue -NumberFormat $nf -Date1904:$Date1904))
+        }
+        [void]$rows.Add($row.ToArray())
+    }
+
+    return , $rows.ToArray()
+}
+
+function ConvertTo-XlsHeaderObjects {
+    <#
+    .SYNOPSIS
+        1 行目がヘッダーであるジャグ配列を PSCustomObject の配列に変換する。COM は触らない純粋関数。
+        Get-XlsRange の -Header 用内部ヘルパー（T-06）。Export しない。
+    .PARAMETER Rows
+        1 行目がヘッダーであるジャグ配列（ConvertFrom-XlsRangeToRows の戻り値と同じ形）。
+    .EXAMPLE
+        ConvertTo-XlsHeaderObjects -Rows $rows
+    .NOTES
+        実装判断: ヘッダーセルが $null／空文字列の場合は "Column<列番号(1始まり)>" に置き換える。
+        列名が重複する場合は後の列が [ordered] ハッシュテーブルのキーを上書きする（後勝ち）。
+        いずれも仕様に明記がないための実装判断で、実装メモに記録する。
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [array]$Rows
+    )
+
+    $objects = New-Object System.Collections.ArrayList
+
+    if ($Rows.Count -eq 0) {
+        return , $objects.ToArray()
+    }
+
+    $headerRow = $Rows[0]
+    $keys = New-Object System.Collections.ArrayList
+    for ($i = 0; $i -lt $headerRow.Count; $i++) {
+        $h = $headerRow[$i]
+        $key = if ($null -eq $h -or [string]$h -eq '') { 'Column{0}' -f ($i + 1) } else { [string]$h }
+        [void]$keys.Add($key)
+    }
+
+    for ($r = 1; $r -lt $Rows.Count; $r++) {
+        $dataRow = $Rows[$r]
+        $obj = [ordered]@{}
+        for ($i = 0; $i -lt $keys.Count; $i++) {
+            $obj[$keys[$i]] = if ($i -lt $dataRow.Count) { $dataRow[$i] } else { $null }
+        }
+        [void]$objects.Add([PSCustomObject]$obj)
+    }
+
+    return , $objects.ToArray()
+}
+
+function ConvertTo-XlsCsvField {
+    <#
+    .SYNOPSIS
+        ConvertFrom-XlsValue2 済みの 1 値を CSV フィールド文字列にする（引用・エスケープ含む）。
+        COM は触らない純粋関数。Get-XlsRange の -AsCsv 用内部ヘルパー（T-06）。Export しない。
+    .PARAMETER Value
+        変換済みの値（$null/[string]/[double]/[bool] のいずれか）。
+    .EXAMPLE
+        ConvertTo-XlsCsvField -Value 3.14
+    .NOTES
+        [double] は不変カルチャ・"G15"（Excel の倍精度浮動小数点が実用上持つ有効桁数相当）で
+        文字列化する。実行環境のカルチャ（10 進区切りなど）に CSV の中身が左右されないようにする
+        ため（S-01 のファイル I/O エンコーディング明示と同じ趣旨）。
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowNull()]
+        $Value
+    )
+
+    if ($null -eq $Value) {
+        return ''
+    }
+
+    $text = if ($Value -is [double]) {
+        $Value.ToString('G15', [Globalization.CultureInfo]::InvariantCulture)
+    }
+    elseif ($Value -is [bool]) {
+        if ($Value) { 'True' } else { 'False' }
+    }
+    else {
+        [string]$Value
+    }
+
+    if ($text -match '[",\r\n]') {
+        return '"' + ($text -replace '"', '""') + '"'
+    }
+
+    return $text
+}
+
+function Export-XlsRowsToCsv {
+    <#
+    .SYNOPSIS
+        ジャグ配列（行の配列の配列）を UTF-8（BOM 付き）CSV として書き出す。COM は触らない。
+        Get-XlsRange の -AsCsv 用内部ヘルパー（T-06）。Export しない。
+    .PARAMETER Rows
+        書き出す行データ（ConvertFrom-XlsRangeToRows の戻り値と同じ形。既に変換済みの値であること）。
+    .PARAMETER Path
+        書き出し先パス。
+    .EXAMPLE
+        Export-XlsRowsToCsv -Rows $rows -Path 'C:\tmp\out.csv'
+    .NOTES
+        S-01: UTF-8 BOM 付きを明示する（PowerShell 5.1 の既定エンコーディング問題を避けるため、
+        Invoke-XlsSession のマーカー書き込みと同じ GetPreamble() + GetBytes() 方式に揃えた）。
+        改行は CRLF（RFC 4180、Excel 自身が生成する CSV と同じ）。
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [array]$Rows,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $lines = New-Object System.Collections.ArrayList
+    foreach ($row in $Rows) {
+        $fields = New-Object System.Collections.ArrayList
+        foreach ($value in $row) {
+            [void]$fields.Add((ConvertTo-XlsCsvField -Value $value))
+        }
+        [void]$lines.Add(($fields.ToArray() -join ','))
+    }
+
+    $text = ''
+    if ($lines.Count -gt 0) {
+        $text = ($lines.ToArray() -join "`r`n") + "`r`n"
+    }
+
+    $bytes = [Text.Encoding]::UTF8.GetPreamble() + [Text.Encoding]::UTF8.GetBytes($text)
+    try {
+        [IO.File]::WriteAllBytes($Path, $bytes)
+    }
+    catch {
+        throw "Failed to write CSV to '$Path'. Check that the parent directory exists and is writable. Underlying error: $($_.Exception.Message)"
+    }
+}
+
+function Export-XlsJson {
+    <#
+    .SYNOPSIS
+        任意のデータを UTF-8（BOM 付き）JSON として書き出す。COM は触らない。
+        Get-XlsRange の -AsJson 用内部ヘルパー（T-06）。Export しない。
+    .PARAMETER Data
+        書き出すデータ（配列でもオブジェクトでも可）。
+    .PARAMETER Path
+        書き出し先パス。
+    .EXAMPLE
+        Export-XlsJson -Data $rows -Path 'C:\tmp\out.json'
+    .NOTES
+        罠: `ConvertTo-Json` はパイプライン経由でデータを渡すと、要素数 1 の配列を自動的に中身だけに
+        アンラップしてしまう（PowerShell 全般の既知の挙動）。ここでは必ず `-InputObject`（パイプでは
+        なく名前付き引数）で渡すことで、配列は要素数によらず配列のまま JSON 化されることを実機で
+        確認した（実装メモ参照）。
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowNull()]
+        $Data,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $json = ConvertTo-Json -InputObject $Data -Depth 10
+
+    $bytes = [Text.Encoding]::UTF8.GetPreamble() + [Text.Encoding]::UTF8.GetBytes($json)
+    try {
+        [IO.File]::WriteAllBytes($Path, $bytes)
+    }
+    catch {
+        throw "Failed to write JSON to '$Path'. Check that the parent directory exists and is writable. Underlying error: $($_.Exception.Message)"
+    }
+}
+
 function Get-XlsRange {
     <#
     .SYNOPSIS
-        Range.Value2 を 2 次元配列で一括取得する（セル単位ループの代替）。
+        Range.Value2 を一括取得し、日付・空セル・エラー値を変換したジャグ配列（既定）または
+        ヘッダー付きオブジェクト配列（-Header）として返す。CSV/JSON への書き出しにも対応する
+        （セル単位ループの代替。01-design.md §3.5）。
     .PARAMETER Worksheet
-        対象の Worksheet COM オブジェクト。
+        対象の Worksheet COM オブジェクト（Invoke-XlsSession の ScriptBlock 内で得たもの。G-06）。
     .PARAMETER Range
-        取得する範囲（A1 形式）。
+        取得する範囲（A1 形式。例 'A1:C10'。単一セルも可）。
     .PARAMETER AsCsv
-        指定した場合、結果を UTF-8 (BOM 付き) CSV として書き出すパス。
+        指定した場合、結果を UTF-8（BOM 付き）CSV として書き出すパス。
     .PARAMETER AsJson
-        指定した場合、結果を JSON として書き出すパス。
+        指定した場合、結果を UTF-8（BOM 付き）JSON として書き出すパス。
     .PARAMETER Header
-        1 行目をヘッダーとして扱う。
+        1 行目をヘッダーとして扱う。戻り値が PSCustomObject の配列（ヘッダー名をプロパティ名とする）
+        になり、-AsJson の出力もオブジェクト配列になる（実装判断、実装メモ参照）。
     .EXAMPLE
         Get-XlsRange -Worksheet $ws -Range 'A1:C10'
+    .EXAMPLE
+        Get-XlsRange -Worksheet $ws -Range 'A1:C10' -Header -AsJson 'C:\tmp\out.json'
+    .NOTES
+        実装判断（詳細は実装メモ）:
+          - 既定の戻り値はジャグ配列（行の配列の配列）であり [object[,]] ではない。PowerShell
+            ネイティブの配列にすることで、エージェントが `$rows[0][1]` のように素直に扱え、
+            `ConvertTo-Json` への受け渡しも自然になる。
+          - -Header は戻り値と -AsJson の出力に一貫して反映する（1 行目を読み飛ばしてヘッダー名を
+            キーにしたオブジェクト配列にする）。-AsCsv の出力バイト列は -Header の有無で変わらない
+            （CSV は元々「1 行目がヘッダーかどうか」を区別しないフォーマットで、ジャグ配列には
+            ヘッダー行を含む全行がそのまま入っているため、-Header の有無にかかわらず同じ内容が
+            書き出される。取り違えではなく意図した挙動）。
+          - 空セルは $null、エラー値は "#REF!" 等の表示文字列、日付は ISO 8601 文字列に変換する
+            （変換規則は ConvertFrom-XlsValue2 に集約。T-07/T-08 が再利用する想定）。
+          - 単一セル範囲は Value2 がスカラーで返る既知の COM の罠を吸収し、1 行 1 列のジャグ配列にする。
     #>
     [CmdletBinding()]
     param(
@@ -665,7 +1487,43 @@ function Get-XlsRange {
         [switch]$Header
     )
 
-    throw 'Get-XlsRange は未実装です（T-06 で実装予定）。'
+    try {
+        $rangeObj = $Worksheet.Range($Range)
+    }
+    catch {
+        throw "Invalid range address '$Range' on worksheet '$($Worksheet.Name)'. Check the A1-style address (e.g. 'A1' or 'A1:C10'). Excel reported: $($_.Exception.Message)"
+    }
+
+    # round 2 レビュー指摘（blocking）対応: Workbook.Date1904 を 1 回だけ読み、日付変換に使う
+    # （Worksheet.Parent が所属 Workbook を返すことを実機で確認済み。実装メモ参照）。
+    $date1904 = [bool]$Worksheet.Parent.Date1904
+
+    $rows = ConvertFrom-XlsRangeToRows -RangeObj $rangeObj -Date1904:$date1904
+
+    # 罠（T-06 で発見、実機確認。実装メモ参照）: `$result = if (...) {...} else {...}`（if/else を
+    # 式として使い代入する形）は、選ばれた枝の値が「要素数 1 の配列」で、かつその配列が既に 1 回
+    # 関数の `return ,` 境界を通過済みの値（今回は $rows。ConvertFrom-XlsRangeToRows からの戻り値）
+    # だった場合、もう 1 段階多く展開してしまい中身を剥がしてしまうことを実機で確認した
+    # （同じ配列をインラインでその場で作った場合は再現しない。ローカル変数への代入元がどこかで
+    # 関数境界をまたいだかどうかで挙動が変わる、PowerShell の出力ストリーム展開の紛らわしい罠）。
+    # if/else を「式」ではなく「文」として使い、各枝の中で直接 `$result` に代入する形に変えることで
+    # この追加展開を避ける。
+    if ($Header) {
+        $result = ConvertTo-XlsHeaderObjects -Rows $rows
+    }
+    else {
+        $result = $rows
+    }
+
+    if ($AsCsv) {
+        Export-XlsRowsToCsv -Rows $rows -Path $AsCsv
+    }
+
+    if ($AsJson) {
+        Export-XlsJson -Data $result -Path $AsJson
+    }
+
+    return , $result
 }
 
 function Set-XlsRange {

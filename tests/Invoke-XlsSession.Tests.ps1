@@ -152,7 +152,7 @@ Describe 'Invoke-XlsSession (T-03)' {
         Assert-NoOrphanExcel -Baseline $script:BaselinePids
     }
 
-    It '(d) passes the ScriptBlock return value through unchanged' {
+    It '(d) passes the ScriptBlock return value through unchanged (scalar)' {
         $path = New-TempXlsxPath
         $marker = 'xlsagent-{0}' -f ([guid]::NewGuid())
 
@@ -162,6 +162,69 @@ Describe 'Invoke-XlsSession (T-03)' {
         }
 
         $result | Should Be $marker
+    }
+
+    # round 2 レビュー指摘（T-06、should-fix）対応: `return , (& $ScriptBlock $app $wb)`
+    # （T-06 が導入した 1 行修正）の「非列挙の単一の値として返す」契約を、単一要素配列・
+    # 複数要素配列・複数回パイプライン出力の 3 パターンで固定する。関数 .NOTES にも明文化した。
+    It '(d) preserves a single-element array as one array value, not unwrapped to its bare element' {
+        $path = New-TempXlsxPath
+
+        $result = Invoke-XlsSession -Path $path -ScriptBlock {
+            param($app, $wb)
+            , @('only-element')
+        }
+
+        , $result | Should Not Be $null
+        $result.Count | Should Be 1
+        $result[0] | Should Be 'only-element'
+    }
+
+    It '(d) preserves a multi-element array as one array value' {
+        $path = New-TempXlsxPath
+
+        $result = Invoke-XlsSession -Path $path -ScriptBlock {
+            param($app, $wb)
+            @('a', 'b', 'c')
+        }
+
+        $result.Count | Should Be 3
+        $result[0] | Should Be 'a'
+        $result[1] | Should Be 'b'
+        $result[2] | Should Be 'c'
+    }
+
+    It '(d) collapses multiple pipeline outputs from the ScriptBlock into a single array value (documented stream contract)' {
+        # 契約（Invoke-XlsSession の .NOTES 参照）: ScriptBlock が複数回パイプライン出力しても、
+        # Invoke-XlsSession はそれらを 1 個の object[] にまとめて「1 つの値」として返す
+        # （呼び出し元が `Invoke-XlsSession ... | ForEach-Object` のように複数オブジェクトとして
+        # 個別に受け取れる、という意味のストリーム透過性は保証しない）。
+        #
+        # round 2 レビュー指摘（should-fix）対応: `$result = Invoke-XlsSession ...` という代入で
+        # 受けると、PowerShell の代入自体が複数パイプライン出力を 1 個の配列にまとめてしまうため、
+        # 「ScriptBlock が 3 回出力した結果、呼び出し元のパイプラインに 3 個のオブジェクトが流れて
+        # 代入時に配列へ再構成されただけ」なのか、「Invoke-XlsSession が最初から 1 個の配列オブジェクト
+        # だけをパイプへ流した」のかを代入では区別できず、契約を固定できていなかった。代入する前の
+        # パイプラインを ForEach-Object で直接観測し、観測されたオブジェクト数が 1 個であり、かつ
+        # その 1 個が要素数 3 の配列であることを確認する。
+        $path = New-TempXlsxPath
+        $observed = New-Object System.Collections.ArrayList
+
+        Invoke-XlsSession -Path $path -ScriptBlock {
+            param($app, $wb)
+            1
+            2
+            3
+        } | ForEach-Object {
+            [void]$observed.Add($_)
+        }
+
+        $observed.Count | Should Be 1
+        ($observed[0] -is [array]) | Should Be $true
+        $observed[0].Count | Should Be 3
+        $observed[0][0] | Should Be 1
+        $observed[0][1] | Should Be 2
+        $observed[0][2] | Should Be 3
     }
 
     It 'throws before launching Excel when the current thread is not STA' {

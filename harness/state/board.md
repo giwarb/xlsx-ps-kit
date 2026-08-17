@@ -9,8 +9,8 @@
 | T-03 | Invoke-XlsSession | done | r3 | 2026-08-17 |
 | T-04 | Save-XlsWorkbook | done | r2 | 2026-08-17 |
 | T-05 | Clear-XlsOrphans | done | r2 | 2026-08-17 |
-| T-06 | Get-XlsRange | impl | r1 | 2026-08-17 |
-| T-07 | Get-XlsOverview | todo | - | |
+| T-06 | Get-XlsRange | done | r4 | 2026-08-17 |
+| T-07 | Get-XlsOverview | impl | r1 | 2026-08-17 |
 | T-08 | Get-XlsModel | todo | - | |
 | T-09 | Set-XlsRange | todo | - | |
 | T-10 | Test-XlsFormulas 関数 | todo | - | |
