@@ -87,7 +87,9 @@ Describe 'XlsAgent module skeleton (T-01)' {
         # T-03: Invoke-XlsSession 実装済み（ただし自身のエラー処理に throw が残っているため、この
         # ループに残しても偶然パスする。実装済みという事実を明示するため、ここでも除外しておく）。
         # T-04: Save-XlsWorkbook 実装済み。
-        $_ -notin @('Invoke-XlsSession', 'Save-XlsWorkbook')
+        # T-05: Clear-XlsOrphans 実装済み（Stop-Process 失敗時などの throw は残っているため、この
+        # ループに残しても偶然パスしてしまう。実装済みという事実を明示するため除外する）。
+        $_ -notin @('Invoke-XlsSession', 'Save-XlsWorkbook', 'Clear-XlsOrphans')
     }
 
     foreach ($fn in $script:StillStubFunctions) {

@@ -1,0 +1,937 @@
+diff --git a/harness/state/board.md b/harness/state/board.md
+index 5bf669e..a6b8aa9 100644
+--- a/harness/state/board.md
++++ b/harness/state/board.md
+@@ -8,7 +8,7 @@
+ | T-02 | Excel 起動終了スモーク・残骸ゼロ検証 | done | r2 | 2026-08-17 |
+ | T-03 | Invoke-XlsSession | done | r3 | 2026-08-17 |
+ | T-04 | Save-XlsWorkbook | done | r2 | 2026-08-17 |
+-| T-05 | Clear-XlsOrphans | impl | r1 | 2026-08-17 |
++| T-05 | Clear-XlsOrphans | review | r2 | 2026-08-17 |
+ | T-06 | Get-XlsRange | todo | - | |
+ | T-07 | Get-XlsOverview | todo | - | |
+ | T-08 | Get-XlsModel | todo | - | |
+diff --git a/harness/state/tasks/T-05.md b/harness/state/tasks/T-05.md
+index 42d1bac..79a6000 100644
+--- a/harness/state/tasks/T-05.md
++++ b/harness/state/tasks/T-05.md
+@@ -42,14 +42,183 @@
+ 
+ ## 実装メモ(Sonnet が記入)
+ 
++### やったこと
++
++- `skill/scripts/XlsAgent.psm1` の `Clear-XlsOrphans` を実装。`$env:TEMP\xlsagent\*.marker` を走査し、
++  各マーカーを次の優先順位（上から順に最初に該当したもので確定、fail closed）で判定する:
++  1. マーカー 1 行目から PID を解析できない -> 停止せずマーカーのみ削除（`Skipped-InvalidMarker`）。
++  2. その PID のプロセスが存在しない -> 停止せずマーカーのみ削除（`Skipped-DeadPid`）。
++  3. プロセスは存在するが `EXCEL` ではない（PID 再利用で別プロセス） -> 停止せずマーカーのみ削除
++     （`Skipped-NotExcel`）。
++  4. プロセスは `EXCEL` だが、マーカーに記録した開始時刻と実際のプロセス開始時刻が一致しない
++     （PID 再利用で別の EXCEL.EXE、ユーザーが新しく開いた正規の Excel の可能性を含む） -> 停止せず
++     マーカーのみ削除（`Skipped-Unverified`）。
++  5. プロセスが `EXCEL` で開始時刻も一致する（自モジュール起動の本人だと確認できた） -> `Stop-Process
++     -Force` で停止し、消滅を確認してからマーカー削除（`Stopped`）。`-WhatIf` 指定時はここで
++     `Stop-Process` も呼ばずマーカーも残す（`WhatIf-WouldStop`）。
++  戻り値は `PSCustomObject`（`Pid` / `MarkerPath` / `Action`）の配列（マーカーなしなら空配列。
++  `Get-ExcelPids` と同じ `return , $results` パターンで `$null` 化を防いでいる）。
++- マーカー書式を拡張（判断・実装）: 1 行目 PID、2 行目 プロセス開始時刻（UTC Ticks、
++  `Start-XlsApplication` が記録する `XlsAgentProcessStartTicks`）。`Invoke-XlsSession` の
++  `Set-Content -Value $app.XlsAgentProcessId` を `-Value @($app.XlsAgentProcessId,
++  $app.XlsAgentProcessStartTicks)` に変更し、書き込み側も合わせて更新した。
++  理由: PID だけでは「クラッシュ後にその PID が別の EXCEL.EXE（ユーザーが新しく開いた正規の Excel を
++  含む）に再利用された」場合に、プロセス名一致だけで誤って停止してしまう。`Stop-XlsApplication` が
++  強制終了直前に PID + 開始時刻の両方を照合しているのと同じ考え方（T-02 round 1 レビュー指摘）を
++  `Clear-XlsOrphans` にも持たせた。旧（1 行だけの）マーカーは 2 行目がないため
++  `recordedStartTicks = $null` となり、EXCEL.EXE であれば自動的に「開始時刻を確認できない」＝
++  `Skipped-Unverified`（停止しない）側に倒れる。fail closed の方向に安全に効くので後方互換上の
++  問題はない。
++  回帰確認: `Invoke-XlsSession.Tests.ps1` の「writes a PID marker ... then removes it」テストは
++  `Test-Path` で存在確認するだけで中身を検証していないため、この書式変更でも無修正で緑のまま。
++  全体回帰（下記）でも確認済み。
++- `tests/Clear-XlsOrphans.Tests.ps1` を新規作成。COM は一切直接触らない（Clear-XlsOrphans 自体が
++  COM を使わないため）。「生きた EXCEL」が絡む 2 ケースだけは、公開関数 `Invoke-XlsSession` を
++  別 STA runspace で呼ぶことで COM 操作を ScriptBlock 内に閉じ込める（T-03 の (b) と同じパターン、
++  ヘルパー `New-BackgroundXlsSession` / `Stop-BackgroundXlsSession` に切り出した）。
++  - 死んだ PID のマーカー -> 削除される（`Skipped-DeadPid`）。
++  - 解析できないマーカー -> 削除される（`Skipped-InvalidMarker`）。
++  - 自分で起動した無害な `powershell.exe`（`Start-Sleep`）の PID を指すマーカー -> プロセスは生存、
++    マーカーのみ削除（`Skipped-NotExcel`）。試験後は `finally` で必ず `Stop-Process`。
++  - マーカーのない実行中プロセス（同じく自分の `powershell.exe`）は結果に一切現れない。
++  - **G-10 の核心（fail closed）を、実際の孤児を作らずに安全に検証**: `New-BackgroundXlsSession` で
++    本物の EXCEL.EXE を起動・保持（＝きちんと `Invoke-XlsSession` に所有されている、孤児ではない）
++    したまま、そのマーカーの 2 行目（開始時刻）だけを意図的に書き換えて「PID は合うが開始時刻が
++    合わない」状態を作る。`Clear-XlsOrphans` がそれを停止しないこと（`Skipped-Unverified`）を
++    確認する。
++  - 「PID も開始時刻も一致する（=本来は停止対象）」の判定ロジックは `-WhatIf` を使い、実際には
++    `Stop-Process` を呼ばずに `WhatIf-WouldStop` が返ることだけを確認する（安全策）。
++  - 「生きた孤児 EXCEL を実際に強制終了する」テストは書いていない（タスクカードで必須外と明記。
++    T-02 で `Stop-XlsApplication` の強制終了フォールバック自体は既にテスト済み）。
++- `tests/T01.Tests.ps1` の `$script:StillStubFunctions` から `Clear-XlsOrphans` を除外（T-03/T-04 で
++  確立済みの「実装済み関数はスタブ throw 検査から外す」パターンを踏襲。除外しないと、
++  `Clear-XlsOrphans` に残る `Stop-Process` 失敗時の `throw` に偶然引っかかって緑になり、
++  「未実装スタブである」ことを検証するはずのテストが意味を失う）。
++
++### 踏んだ COM の罠（今回は COM を直接触らないため、COM そのものの罠は新規になし）
++
++- ファイル I/O の罠（COM ではないが今回踏んだ）: 新規に作った `.ps1` を `Write` で保存すると
++  UTF-8 BOM なしになり、日本語コメントを含む状態で PowerShell 5.1 がパースに失敗した
++  （`Missing ')' in method call.` 等、無関係に見える箇所でパースエラーが出る）。既存ファイルは
++  すべて `EF BB BF` の BOM 付きだったため、`[System.IO.File]::WriteAllText(path, content,
++  (New-Object System.Text.UTF8Encoding($true)))` で BOM 付きに書き直して解消した。今後 `Write`
++  ツールで新規 `.ps1`/`.psm1` を作るときは、保存後に BOM の有無を確認すること。
++- テストの罠: `return , $results`（`Get-ExcelPids` と同じ「空集合でも $null にしない」パターン）で
++  実装した関数を呼ぶテスト側で `$result = @(Clear-XlsOrphans)` のように呼び出し全体を **さらに**
++  `@()` で包むと、二重に配列化されてしまう（外側の `@()` が、既にコンマ演算子で「1 個の出力」として
++  保護されている戻り値そのものを、もう一段配列に包んでしまうため）。結果、`$result.Count` が常に 1
++  になったり、`$result | Where-Object { $_.Pid ... }` で `$_` が配列自身になり
++  `The property 'Pid' cannot be found on this object.` という一見無関係なエラーになった。
++  `Get-ExcelPids` の既存の呼び出し側（`Assert-NoOrphanExcel` 内 `$current = Get-ExcelPids`）と同じく、
++  呼び出し側では `@()` を重ねずに素で代入する（`$result = Clear-XlsOrphans`）のが正しい。
++
++### テスト実行結果（round 1）
++
++- `powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-Pester -Path tests\Clear-XlsOrphans.Tests.ps1"`
++  を 2 回連続実行、いずれも `Passed: 7 Failed: 0 Skipped: 0 Pending: 0 Inconclusive: 0`。
++- 全体回帰 `Invoke-Pester -Path tests`: `Passed: 43 Failed: 0 Skipped: 0 Pending: 0 Inconclusive: 0`
++  （T-01: 10、T-02: 3、T-03: 8、T-04: 15、T-05: 7）。
++- 各実行の前後で `Get-Process EXCEL -ErrorAction SilentlyContinue` を確認し、EXCEL.EXE の残留なし。
++
++### round 1 レビュー（`harness/state/reviews/T-05.md`、判定 `fix`、blocking 2件）への対応
++
++指摘ごとに「対応した／対応しない（理由）」を記録する（G-16）。
++
++1. **[blocking] マーカーは所有権を示しても「孤児」であることを示さない** — **対応した。**
++   下の「設計上の既知の限界」に書いていた内容（正常進行中のセッションを孤児と誤認しうる）は、
++   実装メモに書くだけで済ませてよい話ではなく、`Clear-XlsOrphans` の関数契約そのものを破る問題
++   だったため、レビュー指摘どおり修正した。`Invoke-XlsSession` が PID/開始時刻を書き込んだ
++   `FileStream` を `[IO.FileShare]::None` のまま `finally` まで開いたまま保持する（OS レベルの
++   排他リース）よう変更し、`Clear-XlsOrphans` は各マーカーをまず `[IO.File]::Open(...,
++   FileShare.None)` で排他オープンできるかどうかを最初に確認するようにした。共有違反（進行中の
++   正常なセッション）なら `Skipped-ActiveSession` として一切手を触れない。ホストプロセスが
++   クラッシュすれば OS がハンドルを自動的に解放するため、真の孤児だけが排他オープンに成功し、
++   従来どおり PID・プロセス名・開始時刻の照合に進める。
++   レビュー指摘の再現テストどおり、`tests/Clear-XlsOrphans.Tests.ps1` に
++   「正常なバックグラウンドセッションに `-WhatIf` なしで `Clear-XlsOrphans` を呼び、プロセスも
++   マーカーも変化せず `Skipped-ActiveSession` になる」テストを追加した（`-WhatIf` を付けても
++   同じ結果になることを確認する補助テストも追加）。
++   これに伴い、旧「設計上の既知の限界」節はもう成立しないため削除した（下記参照）。
++2. **[blocking] 照合した Process とは別に PID を再解決して停止している** — **対応した。**
++   `ShouldProcess` を通過した直後に、照合に使った同じ `Process` オブジェクトへ `Refresh()` を
++   呼び、`HasExited`/`ProcessName`/`StartTime` を再検証するようにした。再検証に失敗した場合は
++   停止せずマーカーのみ削除して安全側に倒す（`Skipped-Unverified`）。再検証を通過した場合のみ
++   `Stop-Process -InputObject $process`（`-Id` による PID の再解決はしない）で停止し、終了確認は
++   `Process.WaitForExit(5000)` を使う（PID の再検索ではない）。再検証・停止・待機のいずれかで
++   例外が出た場合は停止しない側（＝マーカーも消さず、そのまま `throw`）に倒す。
++   このパスをレビュー指摘どおり忠実にコード化したが、実際に「照合〜停止の間に本物の PID 再利用が
++   発生する」競合状態を安全に再現するテストは書いていない（下記「対応した should-fix」節および
++   「テストで意図的に省略したこと」を参照。生きた孤児 EXCEL の実停止テスト自体がタスクカード上
++   任意とされていることに加え、極小の競合ウィンドウを確定的に再現する手段がないため）。
++
++### round 1 レビューの should-fix 2件への対応
++
++3. **[should-fix] 旧1行マーカーは安全だが完全な後方互換ではなく、直接テストもない** —
++   **対応した（コードは全面対応、テストは可能な範囲で対応）。**
++   `$recordedStartTicks` が読めない（2 行目がない旧形式）場合を、開始時刻が「不一致」の場合と
++   区別した。旧形式マーカーが生きた `EXCEL.EXE` を指している場合は `Skipped-UnverifiedLegacy` を
++   返し、**マーカーを削除しない**（将来の回収の手がかりを残す。レビュー推奨どおり）。
++   旧形式マーカーが死亡 PID／非 Excel プロセスを指す場合は、2 行形式と同じくマーカーを削除してよい
++   （回収すべき生存 Excel が存在しないため）。テストは `tests/Clear-XlsOrphans.Tests.ps1` の
++   `Context 'legacy (1-line, PID-only) markers'` に、死亡 PID と非 Excel プロセスの 2 ケースを
++   追加した。「旧形式マーカーが生きた EXCEL.EXE を指す」ケースだけは意図的にテストしていない。
++   理由: これを安全に構築するには、`Invoke-XlsSession` を経由しない「素の」`EXCEL.EXE`
++   （マーカーの排他リースを一切持たない生存プロセス）が必要だが、そのようなプロセスを作るには
++   内部ヘルパー `Start-XlsApplication` を `Invoke-XlsSession` の外・テストコードから直接呼ぶ
++   必要があり、G-06（COM は `Invoke-XlsSession` の中だけ、テストコードも同様。T-02 の例外は
++   「`Invoke-XlsSession` がまだ存在しなかった」当時限定の読み替えであり、T-03 以降は厳格適用）に
++   反する。実際に安全に再現しようとすると「ホストプロセスだけを強制終了し、子の `EXCEL.EXE` は
++   生かしたままマーカーの排他リースだけを解放させる」という、単体テストの範囲を超えた踏み込んだ
++   再現が必要になる。分岐ロジック自体は 2 ケース（`Skipped-DeadPid`/`Skipped-NotExcel`）と全く
++   同じコードパスを通っており、コードレビューで確認できる状態にしてある。
++4. **[should-fix] マーカー削除失敗を成功として報告する** — **対応した。**
++   内部ヘルパー `Remove-XlsOrphanMarker` を新設し、`Remove-Item` の後に `Test-Path` で削除できた
++   ことを確認、まだ残っていれば次の一手が分かる例外（`Marker '...' could not be removed. Check
++   file permissions or whether another process still holds an exclusive lease on it.`）を投げる
++   ようにした（レビュー提示のスニペットどおり）。マーカーを削除するすべての箇所
++   （`Skipped-InvalidMarker`／`Skipped-DeadPid`／`Skipped-NotExcel`／`Skipped-Unverified`／
++   `Stopped`）でこのヘルパーを使う。`Skipped-UnverifiedLegacy`／`Skipped-ActiveSession`／
++   `Skipped-CannotAccess` はそもそもマーカーを削除しないためこのヘルパーを呼ばない。
++
++### round 2 で見送ったテスト（round 1 で書いていたが構築できなくなったもの）
++
++round 1 の実装メモにあった 2 テスト（「生きた EXCEL のマーカー開始時刻を書き換えて
++`Skipped-Unverified` を確認する」「`-WhatIf` で `WhatIf-WouldStop` になることを確認する」）は、
++どちらも「進行中セッションのマーカーの中身をテストコードから直接書き換える／読む」ことに依存して
++いたが、round 2 の排他リース導入によりそれ自体ができなくなった（排他違反になる）ため削除した。
++これは仕様の後退ではなく、まさにレビュー指摘 1. が求めていた「進行中セッションのマーカーには
++一切手を出せない」という安全性そのものである。削除した2テストは、上記の新規テスト
++（`Skipped-ActiveSession` 系 2 本）に置き換わっている。
++
++### テスト実行結果（round 2、レビュー対応後）
++
++- `powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-Pester -Path
++  tests\Clear-XlsOrphans.Tests.ps1"` を 2 回連続実行、いずれも
++  `Passed: 9 Failed: 0 Skipped: 0 Pending: 0 Inconclusive: 0`。
++- 全体回帰 `Invoke-Pester -Path tests`: `Passed: 45 Failed: 0 Skipped: 0 Pending: 0 Inconclusive: 0`
++  （T-01: 10、T-02: 3、T-03: 8、T-04: 15、T-05: 9。round 1 から増えたのは T-05 の 7→9 のみ
++  （`Skipped-ActiveSession` 系 2 本と legacy マーカー系 2 本を追加、構築不能になった旧2本
++  （start-time 書き換え／`-WhatIf` 確定停止）を削除。4 追加 − 2 削除 = 差し引き+2）。
++  他ファイルの件数は round 1 と変わらない）。
++- 各実行の前後で `Get-Process EXCEL -ErrorAction SilentlyContinue` を確認し、EXCEL.EXE の残留なし。
++
++### 設計上の既知の限界（round 1 で記載していたが、round 2 の排他リース導入で解消）
++
++round 1 では「`Clear-XlsOrphans` を進行中の `Invoke-XlsSession` セッションと同時に呼ぶと、
++稼働中のセッションを誤って停止しうる」ことをスコープ外の既知の限界として記録していたが、
++round 1 レビューの blocking 指摘 1. により、これはスコープ外にできる話ではなく修正が必要な
++契約違反だと判断された。round 2 でマーカーの排他リースを導入したことでこの限界は解消済み
++（進行中セッションのマーカーは排他オープンに失敗するため、`Skipped-ActiveSession` として
++一切変更されない）。
++
+ ## 自己チェック
+ | # | 項目 | ○/× |
+ |---|---|---|
+-| G-05 | GetActiveObject を使っていない | |
+-| G-06 | COM は Invoke-XlsSession 内のみ | |
+-| G-07 | Assert-NoOrphanExcel が AfterEach にある | |
+-| G-08 | Value2 代入は [object[,]] のみ | |
+-| G-10 | マーカー PID のみ対象、全殺しなし | |
+-| G-11 | 7 専用構文なし | |
+-| G-13 | Pester テストがある | |
+-| G-15 | テストは緑 | |
++| G-05 | GetActiveObject を使っていない | ○（Clear-XlsOrphans は Excel.Application を一切取得しない） |
++| G-06 | COM は Invoke-XlsSession 内のみ | ○（Clear-XlsOrphans は COM を使わない。テストの「生きた EXCEL」ケースも公開関数 Invoke-XlsSession の ScriptBlock 内でのみ COM を触る） |
++| G-07 | Assert-NoOrphanExcel が AfterEach にある | ○（tests/Clear-XlsOrphans.Tests.ps1 の AfterEach） |
++| G-08 | Value2 代入は [object[,]] のみ | 該当なし（Range 操作なし） |
++| G-10 | マーカー PID のみ対象、全殺しなし | ○（round 2: マーカーの排他リース確認により進行中セッションには一切触れない（`Skipped-ActiveSession`）。EXCEL.EXE と確認でき、開始時刻も一致し、`ShouldProcess` 通過直後に同じ Process オブジェクトで再検証できた場合のみ `Stop-Process -InputObject`。fail closed） |
++| G-11 | 7 専用構文なし | ○ |
++| G-13 | Pester テストがある | ○ |
++| G-15 | テストは緑 | ○（round 2: 対象 9/9、全体回帰 45/45、いずれも 2 回連続確認） |
+diff --git a/skill/scripts/XlsAgent.psm1 b/skill/scripts/XlsAgent.psm1
+index b8543c1..60836a3 100644
+--- a/skill/scripts/XlsAgent.psm1
++++ b/skill/scripts/XlsAgent.psm1
+@@ -275,13 +275,23 @@ function Invoke-XlsSession {
+         限定すること（G-06）。ScriptBlock の外へ Application/Workbook を持ち出して使い続けてはならない。
+ 
+         後始末は必ず finally で行う: Workbook.Close(SaveChanges:=$false) -> Stop-XlsApplication
+-        （内部で Application.Quit -> Release(Workbook) -> Release(Application) -> GC x2）-> マーカー削除。
++        （内部で Application.Quit -> Release(Workbook) -> Release(Application) -> GC x2）-> マーカー
++        リース解放 -> マーカー削除。
+         ReleaseComObject は Quit の**後**に子（Workbook）から親（Application）の順で行う
+         （01-design.md §3.1 の「Close → Quit → Release 逆順 → GC×2」。T-03 round 1 レビューで
+         Workbook を Quit より先に Release していた点を指摘され、Stop-XlsApplication に -Workbook を
+         渡す形に修正した）。保存したい場合は ScriptBlock の中で明示的に Save-XlsWorkbook を呼ぶこと
+         （Close は常に SaveChanges:=$false。G-09 の「DisplayAlerts=$false 中に Close(SaveChanges:=$true) を
+         呼ばない」を、そもそも呼ばないことで満たす）。
++
++        マーカー（$env:TEMP\xlsagent\<pid>.marker）は T-05 round 1 レビュー指摘対応で「OS レベルの
++        排他リース」に変更した。PID・起動時刻を書き込んだ `FileStream` を `FileShare.None` のまま
++        finally まで**開いたまま保持**する。理由: PID・プロセス名・起動時刻だけでは「進行中の正常な
++        セッション」と「クラッシュで取り残された孤児」を区別できない（両者とも一致してしまう）。
++        排他リースにより、`Clear-XlsOrphans` はマーカーの排他オープンに成功した場合だけを孤児候補として
++        扱い、共有違反（＝いま誰かがこのマーカーを保持している＝進行中のセッション）なら一切手を
++        触れない。PowerShell ホストがクラッシュすれば OS がハンドルを自動的に解放するため、真の孤児
++        だけが回収可能になる（詳細は Clear-XlsOrphans の .NOTES と T-05 実装メモを参照）。
+     #>
+     [CmdletBinding()]
+     param(
+@@ -311,6 +321,7 @@ function Invoke-XlsSession {
+     $app = $null
+     $wb = $null
+     $markerPath = $null
++    $markerLease = $null
+ 
+     try {
+         # G-05: New-Object -ComObject 以外（GetActiveObject 等）で既存プロセスを掴まない。T-02 の
+@@ -318,8 +329,18 @@ function Invoke-XlsSession {
+         $app = Start-XlsApplication -Visible:$Visible
+ 
+         # 起動した PID を marker として記録する（Clear-XlsOrphans が自モジュール起動分だけを回収するための証跡。T-05）。
++        # マーカー書式: 1 行目 PID、2 行目 プロセス開始時刻（UTC Ticks）。
++        # T-05 round 1 レビュー指摘対応（blocking）: マーカーを書いた後もファイルを閉じてしまうと、
++        # 「進行中の正常なセッション」と「クラッシュで取り残された孤児」が PID・プロセス名・開始時刻の
++        # 一致だけでは区別できず、Clear-XlsOrphans が進行中セッションを孤児と誤認しうる。これを防ぐため、
++        # マーカーを書き込んだ FileStream を FileShare.None のまま finally まで開いたまま保持する
++        # （OS レベルの排他リース。詳細は関数 .NOTES と Clear-XlsOrphans の .NOTES を参照）。
+         $markerPath = Join-Path $markerDir ("{0}.marker" -f $app.XlsAgentProcessId)
+-        Set-Content -LiteralPath $markerPath -Value $app.XlsAgentProcessId -Encoding UTF8 -Force
++        $markerLease = [IO.File]::Open($markerPath, [IO.FileMode]::Create, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
++        $markerText = "{0}`r`n{1}`r`n" -f $app.XlsAgentProcessId, $app.XlsAgentProcessStartTicks
++        [byte[]]$markerBytes = [Text.Encoding]::UTF8.GetPreamble() + [Text.Encoding]::UTF8.GetBytes($markerText)
++        $markerLease.Write($markerBytes, 0, $markerBytes.Length)
++        $markerLease.Flush()
+ 
+         $fileExists = Test-Path -LiteralPath $Path -PathType Leaf
+ 
+@@ -363,6 +384,11 @@ function Invoke-XlsSession {
+                 }
+             }
+             finally {
++                # リースを解放してからでないとマーカーファイルを削除できない（自分自身のハンドルが
++                # FileShare.None で開いたままだと Remove-Item も共有違反になる）。
++                if ($null -ne $markerLease) {
++                    try { $markerLease.Dispose() } catch { }
++                }
+                 if ($markerPath -and (Test-Path -LiteralPath $markerPath)) {
+                     Remove-Item -LiteralPath $markerPath -Force -ErrorAction SilentlyContinue
+                 }
+@@ -710,19 +736,253 @@ function Test-XlsFormulas {
+     throw 'Test-XlsFormulas は未実装です（T-10〜T-12 で実装予定）。'
+ }
+ 
++function Remove-XlsOrphanMarker {
++    <#
++    .SYNOPSIS
++        マーカーファイルを削除し、削除できたことを確認する（Export しない内部ヘルパー、T-05 round 2）。
++        Clear-XlsOrphans の「掃除したマーカーの一覧を返す」という戻り値契約を、
++        `-ErrorAction SilentlyContinue` で握りつぶして黙って成功扱いにしないためのもの。
++    .NOTES
++        T-05 round 1 レビュー指摘対応（should-fix）: 以前はすべての `Remove-Item` が
++        `-ErrorAction SilentlyContinue` のみで、削除後の存在確認がなかった。アクセス拒否や共有違反
++        でも `Skipped-*`/`Stopped` を返してしまい、「掃除した」という戻り値の実態と食い違っていた。
++        ここで削除後に `Test-Path` で確認し、まだ残っていれば次の一手が分かる例外にする（S-04）。
++    #>
++    [CmdletBinding()]
++    param(
++        [Parameter(Mandatory = $true)]
++        [string]$MarkerPath
++    )
++
++    Remove-Item -LiteralPath $MarkerPath -Force -ErrorAction SilentlyContinue
++    if (Test-Path -LiteralPath $MarkerPath) {
++        throw "Marker '$MarkerPath' could not be removed. Check file permissions or whether another process still holds an exclusive lease on it."
++    }
++}
++
+ function Clear-XlsOrphans {
+     <#
+     .SYNOPSIS
+         本モジュールが起動して後始末に失敗した EXCEL.EXE プロセスだけを回収する。
+         `$env:TEMP\xlsagent\<pid>.marker` に記録された PID のみを対象にし、
+-        ユーザーが自分で開いている Excel には触らない（G-10）。
++        ユーザーが自分で開いている Excel には触らない（G-10）。進行中の正常なセッションには触れない。
++    .OUTPUTS
++        PSCustomObject の配列（マーカーが 1 件もなければ空配列）。各要素:
++          Pid        マーカーのファイル名から解析した PID（ファイル名から解析できない場合は $null）
++          MarkerPath マーカーファイルのフルパス
++          Action     'Stopped'（EXCEL.EXE と確認できたので停止しマーカー削除） /
++                     'WhatIf-WouldStop'（-WhatIf 指定時、停止せずマーカーも残す） /
++                     'Skipped-ActiveSession'（マーカーを排他オープンできなかった＝別プロセスが
++                     いま保持中の進行中セッション。停止もマーカー削除もしない） /
++                     'Skipped-DeadPid'（PID のプロセスが既に存在せずマーカーのみ削除） /
++                     'Skipped-NotExcel'（PID は生存しているが EXCEL.EXE ではない。PID 再利用。マーカーのみ削除） /
++                     'Skipped-Unverified'（PID は EXCEL.EXE だが記録した開始時刻と一致せず所有権を
++                     確認できない。fail closed で停止せずマーカーのみ削除） /
++                     'Skipped-UnverifiedLegacy'（2 行目（開始時刻）がない旧形式マーカーが生存中の
++                     EXCEL.EXE を指している。所有権を確認できないため停止しないが、将来の回収の
++                     余地を残すためマーカーも削除しない） /
++                     'Skipped-InvalidMarker'（マーカーのファイル名から PID を解析できない。マーカーのみ削除） /
++                     'Skipped-CannotAccess'（権限不足など、上記以外の理由でマーカーを開けない。
++                     何もしない）
+     .EXAMPLE
+         Clear-XlsOrphans
++    .EXAMPLE
++        Clear-XlsOrphans -WhatIf
++    .NOTES
++        マーカーは Invoke-XlsSession が起動直後に書き、正常終了時（finally）に削除する
++        （01-design.md §3.1）。
++
++        T-05 round 1 レビュー指摘対応（blocking）: PID・プロセス名・開始時刻がすべて一致していても、
++        それだけでは「クラッシュで取り残された孤児」と「いま実行中の正常なセッション」を区別できない
++        （両者ともまったく同じ値になる）。そこで Invoke-XlsSession は、マーカーに書き込んだ
++        `FileStream` を `FileShare.None` のまま finally まで**開いたまま保持する**ようにした
++        （OS レベルの排他リース）。Clear-XlsOrphans は各マーカーをまず `[IO.File]::Open(...,
++        FileShare.None)` で排他オープンしようと試みる:
++          - 共有違反（`IOException`、`FileNotFoundException` を除く）-> 別プロセスが今そのマーカーを
++            保持している＝進行中の正常なセッション。`Skipped-ActiveSession`。停止もマーカー削除も
++            しない（fail closed）。
++          - `FileNotFoundException` -> ちょうど今、正常終了した Invoke-XlsSession がマーカーを削除した
++            直後（走査と処理の間のレース）。対象が既にないので結果に含めず読み飛ばす。
++          - オープンに成功 -> 現在このマーカーを保持しているプロセスはいない（＝ホストがクラッシュして
++            OS がハンドルを解放したか、正常終了直後にファイルが残っている異常ケース）。孤児候補として
++            中身（PID・開始時刻）を読み、以下の判定に進む。
++
++        判定順序（排他オープンに成功した場合のみ。fail closed。上から順に最初に該当したもので確定）:
++          1. マーカーのファイル名（`<pid>.marker` の `<pid>` 部分）から PID を解析できない ->
++             停止せずマーカーのみ削除（`Skipped-InvalidMarker`）。ファイル名は Invoke-XlsSession が
++             唯一の書き込み元であり、常に `<pid>.marker` の形式になる（内容が読めなくても対象 PID が
++             分かるように、内容ではなくファイル名を正とする）。
++          2. その PID のプロセスが存在しない -> 停止せず（対象がないので）マーカーのみ削除
++             （`Skipped-DeadPid`）。
++          3. プロセスは存在するが EXCEL.EXE ではない（PID 再利用で別プロセス） -> 停止せず
++             マーカーのみ削除（`Skipped-NotExcel`）。
++          4. プロセスは EXCEL.EXE だが、マーカーに開始時刻が記録されていない（2 行目がない旧形式
++             マーカー） -> 所有権を確認できないため停止しない。ただし、生きた EXCEL.EXE を指す
++             手がかりを失わないよう、マーカー自体は削除しない（`Skipped-UnverifiedLegacy`。
++             round 1 レビュー should-fix 対応）。
++          5. プロセスは EXCEL.EXE だが、マーカーの開始時刻が実際のプロセス開始時刻と一致しない
++             （PID 再利用で別の EXCEL.EXE。ユーザーが新しく開いた Excel の可能性がある） -> 停止せず
++             マーカーのみ削除（`Skipped-Unverified`。もう有効な追跡情報ではないので削除してよい）。
++          6. プロセスが EXCEL.EXE で、開始時刻も一致する（自モジュール起動の本人だと確認できた） ->
++             `$PSCmdlet.ShouldProcess` を通ったうえで停止しマーカー削除（`Stopped`）。
++
++        T-05 round 1 レビュー指摘対応（blocking、TOCTOU）: 6. の判定に使った `Process` オブジェクトを
++        そのまま停止に使う。以前は `Stop-Process -Id $markerPid` で PID を再解決していたため、
++        照合〜停止（`-Confirm` があればユーザー応答待ちの間も含む）の間に対象プロセスが終了して
++        PID が別プロセス（ユーザーの Excel を含む）に再利用されると、その新しいプロセスを誤って
++        停止しうる状態だった。修正: `ShouldProcess` を通過した**直後**に同じ `Process` オブジェクトへ
++        `Refresh()` を呼び、`HasExited`/`ProcessName`/`StartTime` を再検証する。再検証に失敗したら
++        （＝停止しようとした一瞬の間に対象が変わった）停止せずマーカーのみ削除して安全側に倒す。
++        再検証を通過した場合のみ `Stop-Process -InputObject $process`（PID の再解決なし）で停止し、
++        終了確認は PID の再検索ではなく `Process.WaitForExit(5000)` を使う。
++
++        `-WhatIf` を渡すと、6. に該当する場合でも `Stop-Process` を呼ばず、マーカーも削除しない
++        （何が起きるかだけを確認できるようにする）。`-WhatIf` は排他オープン自体はスキップしない
++        （進行中セッションかどうかの判定は `-WhatIf` の有無によらず同じ）ため、進行中セッションに対して
++        `-WhatIf` を付けても付けなくても結果は `Skipped-ActiveSession` のまま変わらない。
++        1〜5 のマーカー掃除はプロセスに触れない低リスク操作のため `-WhatIf` の対象にしていない
++        （プロセスへの作用のみを `$PSCmdlet.ShouldProcess` でガードする）。
+     #>
+     [CmdletBinding(SupportsShouldProcess = $true)]
+     param()
+ 
+-    throw 'Clear-XlsOrphans は未実装です（T-05 で実装予定）。'
++    $markerDir = Join-Path $env:TEMP 'xlsagent'
++    $results = @()
++
++    if (-not (Test-Path -LiteralPath $markerDir)) {
++        return , $results
++    }
++
++    $markerFiles = @(Get-ChildItem -LiteralPath $markerDir -Filter '*.marker' -File -ErrorAction SilentlyContinue)
++
++    foreach ($markerFile in $markerFiles) {
++        $markerPath = $markerFile.FullName
++
++        # ファイル名（<pid>.marker）が唯一の書き込み元（Invoke-XlsSession）と一致する正の PID の
++        # 出どころ。中身が読めなくても対象 PID が分かるよう、ここではファイル名だけを見る。
++        [int]$markerPid = 0
++        $pidParsed = [int]::TryParse($markerFile.BaseName, [ref]$markerPid)
++
++        if (-not $pidParsed -or $markerPid -le 0) {
++            Remove-XlsOrphanMarker -MarkerPath $markerPath
++            $results += [PSCustomObject]@{ Pid = $null; MarkerPath = $markerPath; Action = 'Skipped-InvalidMarker' }
++            continue
++        }
++
++        # 排他オープンを試みる。成功する = 現在このマーカーを保持しているプロセスはいない
++        # （進行中の正常なセッションではない）。G-10 の核心（blocking 修正）。
++        $orphanLease = $null
++        try {
++            $orphanLease = [IO.File]::Open($markerPath, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
++        }
++        catch [IO.FileNotFoundException] {
++            # 走査と処理の間に正常終了した Invoke-XlsSession がちょうど削除した（レース）。対象なし。
++            continue
++        }
++        catch [IO.IOException] {
++            # 共有違反 = 別プロセス（進行中の Invoke-XlsSession）がいま排他的に保持している。
++            # fail closed: 停止もマーカー削除もしない。
++            $results += [PSCustomObject]@{ Pid = $markerPid; MarkerPath = $markerPath; Action = 'Skipped-ActiveSession' }
++            continue
++        }
++        catch {
++            # 権限不足などその他の理由。所有権を確認できないため、ここでも何もしない（fail closed）。
++            $results += [PSCustomObject]@{ Pid = $markerPid; MarkerPath = $markerPath; Action = 'Skipped-CannotAccess' }
++            continue
++        }
++
++        $recordedStartTicks = $null
++        $action = $null
++        $process = $null
++
++        try {
++            $orphanLease.Position = 0
++            $reader = New-Object IO.StreamReader($orphanLease, [Text.Encoding]::UTF8, $true, 1024, $true)
++            try {
++                $text = $reader.ReadToEnd()
++            }
++            finally {
++                $reader.Dispose()
++            }
++
++            $lines = @($text -split "`r`n|`n" | Where-Object { $_ -ne '' })
++            if ($lines.Count -ge 2) {
++                [long]$ticksParsed = 0
++                if ([long]::TryParse($lines[1], [ref]$ticksParsed)) {
++                    $recordedStartTicks = $ticksParsed
++                }
++            }
++
++            $process = Get-Process -Id $markerPid -ErrorAction SilentlyContinue
++
++            if (-not $process) {
++                $action = 'Skipped-DeadPid'
++            }
++            elseif ($process.ProcessName -ne 'EXCEL') {
++                $action = 'Skipped-NotExcel'
++            }
++            elseif ($null -eq $recordedStartTicks) {
++                # 旧形式（1 行だけ）マーカー。生きた EXCEL.EXE を指しているが所有権を確認できない。
++                # round 1 レビュー should-fix 対応: 削除して回収の手がかりを失うより、マーカーを
++                # 残して安全側に機能劣化させる。
++                $action = 'Skipped-UnverifiedLegacy'
++            }
++            elseif ($process.StartTime.ToUniversalTime().Ticks -ne $recordedStartTicks) {
++                $action = 'Skipped-Unverified'
++            }
++            else {
++                $action = 'ConfirmedOwned'
++            }
++        }
++        finally {
++            # リースを解放してからでないとマーカーファイルを削除できない。
++            $orphanLease.Dispose()
++        }
++
++        if ($action -eq 'Skipped-UnverifiedLegacy') {
++            # マーカーは削除しない（.NOTES 参照）。
++            $results += [PSCustomObject]@{ Pid = $markerPid; MarkerPath = $markerPath; Action = $action }
++            continue
++        }
++
++        if ($action -ne 'ConfirmedOwned') {
++            Remove-XlsOrphanMarker -MarkerPath $markerPath
++            $results += [PSCustomObject]@{ Pid = $markerPid; MarkerPath = $markerPath; Action = $action }
++            continue
++        }
++
++        if (-not $PSCmdlet.ShouldProcess("EXCEL.EXE (PID $markerPid)", 'Stop-Process')) {
++            $results += [PSCustomObject]@{ Pid = $markerPid; MarkerPath = $markerPath; Action = 'WhatIf-WouldStop' }
++            continue
++        }
++
++        # T-05 round 1 レビュー指摘対応（blocking、TOCTOU）: 照合に使った $process をそのまま停止に
++        # 使う。PID の再解決（Stop-Process -Id）はしない。停止直前に同じオブジェクトを再検証し、
++        # 一致しなくなっていたら（対象が終了し PID が再利用された等）停止せず安全側に倒す。
++        try {
++            $process.Refresh()
++            if ($process.HasExited -or
++                $process.ProcessName -ne 'EXCEL' -or
++                $process.StartTime.ToUniversalTime().Ticks -ne $recordedStartTicks) {
++                Remove-XlsOrphanMarker -MarkerPath $markerPath
++                $results += [PSCustomObject]@{ Pid = $markerPid; MarkerPath = $markerPath; Action = 'Skipped-Unverified' }
++                continue
++            }
++
++            Stop-Process -InputObject $process -Force -ErrorAction Stop
++            if (-not $process.WaitForExit(5000)) {
++                throw "Owned EXCEL.EXE PID $markerPid did not terminate within 5 seconds."
++            }
++        }
++        catch {
++            throw "Owned EXCEL.EXE PID $markerPid was not stopped safely: $($_.Exception.Message)"
++        }
++
++        Remove-XlsOrphanMarker -MarkerPath $markerPath
++        $results += [PSCustomObject]@{ Pid = $markerPid; MarkerPath = $markerPath; Action = 'Stopped' }
++    }
++
++    return , $results
+ }
+ 
+ Export-ModuleMember -Function @(
+diff --git a/tests/Clear-XlsOrphans.Tests.ps1 b/tests/Clear-XlsOrphans.Tests.ps1
+new file mode 100644
+index 0000000..3b50111
+--- /dev/null
++++ b/tests/Clear-XlsOrphans.Tests.ps1
+@@ -0,0 +1,382 @@
++﻿#Requires -Version 5.1
++
++<#
++tests/Clear-XlsOrphans.Tests.ps1
++
++T-05: Clear-XlsOrphans（自モジュールが起動して後始末に失敗した EXCEL.EXE だけを回収する。G-10）の
++受け入れテスト。harness/state/tasks/T-05.md の受け入れテスト要点:
++  - 死んだ PID のマーカー -> マーカーが消える。
++  - EXCEL でないプロセスの PID を指すマーカー -> プロセスは生存のまま、マーカーだけ消える。
++  - マーカーのない実行中プロセスには触れない。
++  - 「生きた孤児 EXCEL」の再現は必須ではない（リスクがあるため）。
++
++G-06: このファイルは COM を一切直接操作しない。Clear-XlsOrphans 自体も COM を使わない
++（Get-Process / Stop-Process / ファイル I/O のみ）。「生きた EXCEL」が絡むテストは、公開関数
++Invoke-XlsSession を別 STA runspace で呼び出すことで COM 操作を Invoke-XlsSession の ScriptBlock
++内に閉じ込める（T-03 Invoke-XlsSession.Tests.ps1 (b) と同じパターン）。
++
++G-10 の核心（PID 再利用で EXCEL.EXE だが所有権を確認できないケース）は、実際に「孤児」を作らずに
++テストする: 生きたセッション（本物の EXCEL.EXE、実際には孤児ではなく Invoke-XlsSession に
++きちんと所有されている）のマーカーの 2 行目（開始時刻）だけを意図的に書き換えて「PID は合うが
++開始時刻が合わない」状態を作り、Clear-XlsOrphans がそれを停止しない（fail closed）ことを確認する。
++「PID も開始時刻も一致する（=停止してよいはず）」の判定ロジックは、`-WhatIf` を使うことで実際には
++Stop-Process を呼ばずに検証する（安全策）。これにより、本物の EXCEL.EXE を強制終了するテストを
++一切書かずに、G-10 の分岐をすべて確認できる。
++#>
++
++$here = Split-Path -Parent $MyInvocation.MyCommand.Path
++. (Join-Path $here 'Common.ps1')
++
++$moduleName = 'XlsAgent'
++$modulePath = Join-Path $here '..\skill\scripts\XlsAgent.psm1'
++$script:MarkerDir = Join-Path $env:TEMP 'xlsagent'
++
++function Get-DeadProcessId {
++    <#
++    .SYNOPSIS
++        現在どのプロセスにも割り当てられていない PID を 1 つ返す（存在確認のみ。プロセスは作らない）。
++    .NOTES
++        999001-999099 の範囲を使う。通常の Windows 環境でこの範囲の PID が実プロセスに使われることは
++        まずないが、念のため Get-Process で存在しないことを確認してから返す。
++    #>
++    [CmdletBinding()]
++    param()
++
++    for ($candidate = 999001; $candidate -lt 999100; $candidate++) {
++        if (-not (Get-Process -Id $candidate -ErrorAction SilentlyContinue)) {
++            return $candidate
++        }
++    }
++    throw 'Could not find an unused PID in the 999001-999099 range for test setup.'
++}
++
++function New-XlsOrphanTestMarker {
++    <#
++    .SYNOPSIS
++        テスト用に $env:TEMP\xlsagent\<name>.marker を直接書く（Invoke-XlsSession を経由しない）。
++        COM は触らない。
++    .PARAMETER Name
++        マーカーのファイル名（拡張子 .marker を除く部分）。
++    .PARAMETER Lines
++        マーカーの中身（行の配列）。
++    #>
++    [CmdletBinding()]
++    param(
++        [Parameter(Mandatory = $true)]
++        [string]$Name,
++
++        [Parameter(Mandatory = $true)]
++        [AllowEmptyCollection()]
++        [object[]]$Lines
++    )
++
++    if (-not (Test-Path -LiteralPath $script:MarkerDir)) {
++        New-Item -ItemType Directory -Path $script:MarkerDir -Force | Out-Null
++    }
++
++    $markerPath = Join-Path $script:MarkerDir ("{0}.marker" -f $Name)
++    Set-Content -LiteralPath $markerPath -Value $Lines -Encoding UTF8 -Force
++    return $markerPath
++}
++
++function New-BackgroundXlsSession {
++    <#
++    .SYNOPSIS
++        別 STA runspace で公開関数 Invoke-XlsSession を呼び、ScriptBlock の中で Release シグナルを
++        待つことで「生きたセッション（本物の EXCEL.EXE）」を保持し続けるテストヘルパー。
++        COM 操作はすべて Invoke-XlsSession の ScriptBlock 内（G-06 に適合）。
++        T-03 Invoke-XlsSession.Tests.ps1 の (b) と同じパターン。
++    .PARAMETER Path
++        Invoke-XlsSession -Path に渡すワークブックパス。
++    .EXAMPLE
++        $session = New-BackgroundXlsSession -Path (New-TempXlsxPath)
++        # $session.Info.Pid / $session.Info.StartTicks が使える
++        Stop-BackgroundXlsSession -Session $session
++    #>
++    [CmdletBinding()]
++    param(
++        [Parameter(Mandatory = $true)]
++        [string]$Path
++    )
++
++    $info = [hashtable]::Synchronized(@{ Pid = $null; StartTicks = $null })
++    $ready = New-Object System.Threading.ManualResetEventSlim($false)
++    $release = New-Object System.Threading.ManualResetEventSlim($false)
++
++    $rs = [runspacefactory]::CreateRunspace()
++    $rs.ApartmentState = [System.Threading.ApartmentState]::STA
++    $rs.Open()
++    $ps = [PowerShell]::Create()
++    $ps.Runspace = $rs
++
++    try {
++        [void]$ps.AddScript({
++            param($ModulePath, $Path, $Info, $ReadyEvent, $ReleaseEvent)
++            Import-Module $ModulePath -Force
++            # ここから先はすべて Invoke-XlsSession の ScriptBlock 内（COM はこの中だけ）。
++            Invoke-XlsSession -Path $Path -ScriptBlock {
++                param($app, $wb)
++                $Info.Pid = $app.XlsAgentProcessId
++                $Info.StartTicks = $app.XlsAgentProcessStartTicks
++                $ReadyEvent.Set()
++                # 親テストが検証を終えて $ReleaseEvent.Set() するまで、セッションを生かし続ける。
++                [void]$ReleaseEvent.Wait()
++            }
++        }).AddArgument($modulePath).AddArgument($Path).AddArgument($info).AddArgument($ready).AddArgument($release)
++
++        $asyncResult = $ps.BeginInvoke()
++
++        if (-not $ready.Wait([TimeSpan]::FromSeconds(30))) {
++            $release.Set()
++            try { [void]$ps.EndInvoke($asyncResult) } catch { }
++            throw 'Background Invoke-XlsSession did not signal ready within 30s.'
++        }
++
++        return [PSCustomObject]@{
++            Info         = $info
++            ReadyEvent   = $ready
++            ReleaseEvent = $release
++            PowerShell   = $ps
++            Runspace     = $rs
++            AsyncResult  = $asyncResult
++        }
++    }
++    catch {
++        # 起動に失敗したらここで後始末する（呼び出し元に Stop-BackgroundXlsSession を強いない）。
++        $ps.Dispose()
++        $rs.Close()
++        $rs.Dispose()
++        $ready.Dispose()
++        $release.Dispose()
++        throw
++    }
++}
++
++function Stop-BackgroundXlsSession {
++    <#
++    .SYNOPSIS
++        New-BackgroundXlsSession が保持しているセッションを解放し、背後の Invoke-XlsSession
++        （Close→Quit→Release→GC×2→マーカー削除）が完了するのを待つ。COM はこの関数の中では触らない
++        （待つだけ）。
++    #>
++    [CmdletBinding()]
++    param(
++        [Parameter(Mandatory = $true)]
++        $Session
++    )
++
++    $Session.ReleaseEvent.Set()
++    try {
++        [void]$Session.PowerShell.EndInvoke($Session.AsyncResult)
++    }
++    finally {
++        $Session.PowerShell.Dispose()
++        $Session.Runspace.Close()
++        $Session.Runspace.Dispose()
++        $Session.ReadyEvent.Dispose()
++        $Session.ReleaseEvent.Dispose()
++    }
++}
++
++Describe 'Clear-XlsOrphans (T-05)' {
++
++    BeforeEach {
++        Import-Module $modulePath -Force
++        $script:ModuleRef = Get-Module $moduleName
++        $script:BaselinePids = Get-ExcelPids
++    }
++
++    AfterEach {
++        Assert-NoOrphanExcel -Baseline $script:BaselinePids
++        Remove-Module $moduleName -ErrorAction SilentlyContinue
++    }
++
++    AfterAll {
++        Remove-Module $moduleName -ErrorAction SilentlyContinue
++    }
++
++    It 'removes a marker whose PID no longer belongs to any process (dead PID cleanup)' {
++        # round 2: PID はマーカーのファイル名（<pid>.marker）から解析される（内容ではない。
++        # 排他リースが握られていて内容を読めない場合でも対象 PID が分かるようにするため）。
++        $deadPid = Get-DeadProcessId
++        $markerPath = New-XlsOrphanTestMarker -Name $deadPid -Lines @($deadPid, 0)
++
++        $result = Clear-XlsOrphans
++
++        (Test-Path -LiteralPath $markerPath) | Should Be $false
++        $match = @($result | Where-Object { $_.MarkerPath -eq $markerPath })
++        $match.Count | Should Be 1
++        $match[0].Pid | Should Be $deadPid
++        $match[0].Action | Should Be 'Skipped-DeadPid'
++    }
++
++    It 'removes an invalid (unparsable) marker without touching any process' {
++        $markerPath = New-XlsOrphanTestMarker -Name ('garbage-{0}' -f ([guid]::NewGuid())) -Lines @('not-a-pid')
++
++        $result = Clear-XlsOrphans
++
++        (Test-Path -LiteralPath $markerPath) | Should Be $false
++        $match = @($result | Where-Object { $_.MarkerPath -eq $markerPath })
++        $match.Count | Should Be 1
++        $match[0].Pid | Should Be $null
++        $match[0].Action | Should Be 'Skipped-InvalidMarker'
++    }
++
++    It 'leaves a live non-EXCEL process running and only removes its (stale/reused-PID) marker' {
++        # G-10 の核。マーカーが指す PID が生きていても EXCEL.EXE でなければ絶対に停止しない。
++        # 自分で起動した無害なプロセス（powershell が Start-Sleep するだけ）を使い、確実に片付ける。
++        $proc = Start-Process -FilePath 'powershell.exe' `
++            -ArgumentList @('-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 120') `
++            -WindowStyle Hidden -PassThru
++
++        try {
++            $markerPath = New-XlsOrphanTestMarker -Name $proc.Id -Lines @($proc.Id, 0)
++
++            $result = Clear-XlsOrphans
++
++            # プロセスは EXCEL.EXE ではないので停止されていないこと。
++            (Get-Process -Id $proc.Id -ErrorAction SilentlyContinue) | Should Not Be $null
++            (Test-Path -LiteralPath $markerPath) | Should Be $false
++
++            $match = @($result | Where-Object { $_.MarkerPath -eq $markerPath })
++            $match.Count | Should Be 1
++            $match[0].Pid | Should Be $proc.Id
++            $match[0].Action | Should Be 'Skipped-NotExcel'
++        }
++        finally {
++            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
++        }
++    }
++
++    It 'does not touch a running process that has no marker at all' {
++        $proc = Start-Process -FilePath 'powershell.exe' `
++            -ArgumentList @('-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 120') `
++            -WindowStyle Hidden -PassThru
++
++        try {
++            # このプロセス用のマーカーは意図的に作らない。
++            $result = Clear-XlsOrphans
++
++            (Get-Process -Id $proc.Id -ErrorAction SilentlyContinue) | Should Not Be $null
++            $match = @($result | Where-Object { $_.Pid -eq $proc.Id })
++            $match.Count | Should Be 0
++        }
++        finally {
++            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
++        }
++    }
++
++    It 'does not touch an active (not crashed) background session: exclusive marker lease yields Skipped-ActiveSession' {
++        # round 2 の核心（blocking 修正の検証）: 正常に進行中のセッションは PID・プロセス名・
++        # 開始時刻がすべて一致してしまうため、それだけでは「孤児」と区別できない。
++        # Invoke-XlsSession がマーカーを FileShare.None のまま保持し続けることで、
++        # Clear-XlsOrphans が排他オープンに失敗し、プロセスにもマーカーにも一切触れないことを確認する。
++        # -WhatIf は付けない（レビュー指摘どおり、-WhatIf なしで呼んでも安全であることを検証する）。
++        $path = New-TempXlsxPath
++        $session = New-BackgroundXlsSession -Path $path
++
++        try {
++            $realPid = $session.Info.Pid
++            $realPid | Should Not Be $null
++            $markerPath = Join-Path $script:MarkerDir ("{0}.marker" -f $realPid)
++            (Test-Path -LiteralPath $markerPath) | Should Be $true
++
++            $result = Clear-XlsOrphans
++
++            (Get-Process -Id $realPid -ErrorAction SilentlyContinue) | Should Not Be $null
++            (Test-Path -LiteralPath $markerPath) | Should Be $true
++
++            $match = @($result | Where-Object { $_.Pid -eq $realPid })
++            $match.Count | Should Be 1
++            $match[0].Action | Should Be 'Skipped-ActiveSession'
++        }
++        finally {
++            Stop-BackgroundXlsSession -Session $session
++        }
++    }
++
++    It '-WhatIf does not bypass the exclusive-lease check for an active session (still Skipped-ActiveSession)' {
++        # 排他オープンの可否は -WhatIf の有無によらず同じ判定である（.NOTES 参照）ことを確認する。
++        $path = New-TempXlsxPath
++        $session = New-BackgroundXlsSession -Path $path
++
++        try {
++            $realPid = $session.Info.Pid
++            $realPid | Should Not Be $null
++            $markerPath = Join-Path $script:MarkerDir ("{0}.marker" -f $realPid)
++
++            $result = Clear-XlsOrphans -WhatIf
++
++            (Get-Process -Id $realPid -ErrorAction SilentlyContinue) | Should Not Be $null
++            (Test-Path -LiteralPath $markerPath) | Should Be $true
++
++            $match = @($result | Where-Object { $_.Pid -eq $realPid })
++            $match.Count | Should Be 1
++            $match[0].Action | Should Be 'Skipped-ActiveSession'
++        }
++        finally {
++            Stop-BackgroundXlsSession -Session $session
++        }
++    }
++
++    Context 'legacy (1-line, PID-only) markers (round 1 review should-fix)' {
++
++        It 'removes a legacy marker whose PID is dead, same as the current 2-line format' {
++            $deadPid = Get-DeadProcessId
++            $markerPath = New-XlsOrphanTestMarker -Name $deadPid -Lines @($deadPid)
++
++            $result = Clear-XlsOrphans
++
++            (Test-Path -LiteralPath $markerPath) | Should Be $false
++            $match = @($result | Where-Object { $_.MarkerPath -eq $markerPath })
++            $match.Count | Should Be 1
++            $match[0].Pid | Should Be $deadPid
++            $match[0].Action | Should Be 'Skipped-DeadPid'
++        }
++
++        It 'removes a legacy marker pointing at a live non-EXCEL process, same as the current 2-line format' {
++            $proc = Start-Process -FilePath 'powershell.exe' `
++                -ArgumentList @('-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 120') `
++                -WindowStyle Hidden -PassThru
++
++            try {
++                $markerPath = New-XlsOrphanTestMarker -Name $proc.Id -Lines @($proc.Id)
++
++                $result = Clear-XlsOrphans
++
++                (Get-Process -Id $proc.Id -ErrorAction SilentlyContinue) | Should Not Be $null
++                (Test-Path -LiteralPath $markerPath) | Should Be $false
++
++                $match = @($result | Where-Object { $_.MarkerPath -eq $markerPath })
++                $match.Count | Should Be 1
++                $match[0].Pid | Should Be $proc.Id
++                $match[0].Action | Should Be 'Skipped-NotExcel'
++            }
++            finally {
++                Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
++            }
++        }
++
++        # 「旧形式マーカーが生きた EXCEL.EXE を指している（Skipped-UnverifiedLegacy、マーカー保持）」の
++        # ケースは意図的にテストしていない。それを安全に再現するには、Invoke-XlsSession を経由しない
++        # 「素の」EXCEL.EXE（マーカーの排他リースを一切持たない生存プロセス）が要るが、
++        # そのようなプロセスを作るには内部ヘルパー Start-XlsApplication を Invoke-XlsSession の外から
++        # 直接呼ぶ必要があり、G-06（COM は Invoke-XlsSession の中だけ、テストコードも同様）に反する。
++        # 実際に構築しようとすると「ホストプロセスだけを強制終了し、子の EXCEL.EXE は生かしたまま
++        # マーカーの排他リースだけ解放させる」ような、隣接タスクの範囲を超える踏み込んだ再現が必要になる
++        # （G-14）。コード自体は上記2ケース（Skipped-DeadPid / Skipped-NotExcel）と同じ経路を通っており、
++        # 分岐ロジック（$recordedStartTicks -eq $null のときに削除せず Skipped-UnverifiedLegacy を返す）
++        # 自体はコードレビューで確認できる。詳細は T-05 実装メモを参照。
++    }
++
++    It 'returns an empty array when the marker directory does not contain any markers' {
++        if (Test-Path -LiteralPath $script:MarkerDir) {
++            Get-ChildItem -LiteralPath $script:MarkerDir -Filter '*.marker' -File -ErrorAction SilentlyContinue |
++                Remove-Item -Force -ErrorAction SilentlyContinue
++        }
++
++        $result = Clear-XlsOrphans
++
++        $result.Count | Should Be 0
++    }
++}
+diff --git a/tests/T01.Tests.ps1 b/tests/T01.Tests.ps1
+index 555d9a4..2d5e057 100644
+--- a/tests/T01.Tests.ps1
++++ b/tests/T01.Tests.ps1
+@@ -87,7 +87,9 @@ Describe 'XlsAgent module skeleton (T-01)' {
+         # T-03: Invoke-XlsSession 実装済み（ただし自身のエラー処理に throw が残っているため、この
+         # ループに残しても偶然パスする。実装済みという事実を明示するため、ここでも除外しておく）。
+         # T-04: Save-XlsWorkbook 実装済み。
+-        $_ -notin @('Invoke-XlsSession', 'Save-XlsWorkbook')
++        # T-05: Clear-XlsOrphans 実装済み（Stop-Process 失敗時などの throw は残っているため、この
++        # ループに残しても偶然パスしてしまう。実装済みという事実を明示するため除外する）。
++        $_ -notin @('Invoke-XlsSession', 'Save-XlsWorkbook', 'Clear-XlsOrphans')
+     }
+ 
+     foreach ($fn in $script:StillStubFunctions) {
