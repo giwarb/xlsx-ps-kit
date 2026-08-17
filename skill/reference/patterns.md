@@ -196,7 +196,9 @@ $wb.Names.Add('MyNamedCell', $refersTo)
 
 シートを追加・複製・削除する。`Worksheets.Delete()` は確認ダイアログを出しうるが、
 `Invoke-XlsSession` がセッション開始時に `DisplayAlerts=$false` を設定済みのため、ここで改めて
-設定し直す必要はない。
+設定し直す必要はない。`Worksheets.Add()` は**アクティブシートの直前**に挿入される(タブの末尾に
+追加されるわけではない。T-07 実装メモで確認)。末尾に置きたい場合は追加後に `.Move` で並べ替えるか、
+末尾のシートをアクティブにしてから `Add()` する。
 
 ```powershell
 param($app, $wb)
@@ -212,3 +214,47 @@ $copiedWs.Delete()
 確認: 2026-08-18（T-14、実機。新規ブック（シート 1 枚）から開始し、`$wb.Worksheets.Count` が
 `Add()` 後に `1`→`2`、`Copy()` 後に `2`→`3`、`Delete()` 後に `3`→`2` と推移することを確認。
 `$newWs.Name` が `'AddedSheet'` のまま残っていることも確認）。
+
+## Misc PowerShell/COM gotchas
+
+SKILL.md 本体には載せていない、より細かい・頻度の低い罠。T-15 round 3 のレビュー指摘
+（COM gotchas 章を 15 項目程度へ圧縮する）で、SKILL.md から詳細をここへ移送した。
+
+**`[int]` キャストは切り捨てではなく四捨五入する。** 切り捨てが必要な場面（例: 列文字変換の
+26 進数風の桁上がり計算）で `[int]` を使うと、26 の倍数の境界で 1 桁多い誤った結果になる
+（`ConvertTo-XlsColumnLetter` で実際に踏んだ罠。T-08 実装メモ参照）。`[Math]::Floor()` を使う。
+
+```powershell
+# (26 - 1) / 26 = 0.9615... を [int] にキャストすると切り捨てでなく四捨五入で 1 になってしまう
+[int]((26 - 1) / 26)          # => 1（誤り。26=Z を AZ と誤変換する原因になった）
+[int][Math]::Floor((26 - 1) / 26)  # => 0（正しい）
+```
+
+**2 次元配列を手で組み立てるときの 2 つの構文の罠**（`Set-XlsRange`/`Get-XlsRange` を使えば
+どちらも回避できる。自前で `[object[,]]` やジャグ配列を組む場合だけの注意）:
+
+```powershell
+# 罠1: 多次元配列の添字をメソッド引数へ直書きすると、PowerShell のパーサーが
+# 添字のカンマを引数区切りと誤認して構文エラーになる（T-09 実装メモ）。
+# NG: $list.Add($grid[$r, $c])
+$cell = $grid[$r, $c]
+$list.Add($cell)          # OK: いったんローカル変数に取り出す
+
+# 罠2: @(@(1.0, 2.0)) は 1 段階フラット化され、1 行 2 列ではなく 2 行 1 列になる（T-09 実装メモ）。
+@(@(1.0, 2.0)).Count        # => 2（誤り: 2 行になってしまう）
+@(, @(1.0, 2.0)).Count      # => 1（正しい: 1 行 2 列のジャグ配列を維持）
+```
+
+**型指定のないパラメーター経由で受け取った `[double]` を、関数・`ScriptBlock` の境界を越えて
+そのまま `Range.Value2 =` へ代入すると、まれに `COMException (0x800A03EC)` になることがある**
+（T-06、`ConvertTo-XlsWriteCellValue` 実装メモ。根本原因は未特定だが、代入の直前に明示的に
+`[double]` へ再キャストすると再現しなかった)。
+
+```powershell
+function Set-MyCell {
+    param($Worksheet, $Range, $Value)   # $Value は型指定なし。呼び出し元境界を越えてきた [double]
+    $grid = New-Object 'object[,]' 1,1
+    $grid[0,0] = [double]$Value          # 代入直前に明示的に再キャストする（罠を回避）
+    $Worksheet.Range($Range).Value2 = $grid
+}
+```
