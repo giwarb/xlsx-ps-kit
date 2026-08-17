@@ -8,7 +8,7 @@
 |---|---|---|---|
 | xlCellTypeFormulas | -4123 | SpecialCells | |
 | xlErrors | 16 | SpecialCells 第 2 引数 | |
-| xlCalculationManual | -4135 | Application.Calculation | |
+| xlCalculationManual | -4135 | Application.Calculation | 2026-08-17（T-03 Invoke-XlsSession、実機） |
 | xlCalculationAutomatic | -4105 | Application.Calculation | |
 | xlOpenXMLWorkbook | 51 | SaveAs .xlsx | |
 | xlOpenXMLWorkbookMacroEnabled | 52 | SaveAs .xlsm | |

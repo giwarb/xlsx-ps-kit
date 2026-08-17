@@ -6,8 +6,8 @@
 |---|---|---|---|---|
 | T-01 | モジュール骨組み・Pester 3.4 確認 | done | r2 | 2026-08-17 |
 | T-02 | Excel 起動終了スモーク・残骸ゼロ検証 | done | r2 | 2026-08-17 |
-| T-03 | Invoke-XlsSession | impl | r1 | 2026-08-17 |
-| T-04 | Save-XlsWorkbook | todo | - | |
+| T-03 | Invoke-XlsSession | done | r3 | 2026-08-17 |
+| T-04 | Save-XlsWorkbook | impl | r1 | 2026-08-17 |
 | T-05 | Clear-XlsOrphans | todo | - | |
 | T-06 | Get-XlsRange | todo | - | |
 | T-07 | Get-XlsOverview | todo | - | |

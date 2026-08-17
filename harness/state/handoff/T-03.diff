@@ -1,0 +1,1018 @@
+diff --git a/harness/state/board.md b/harness/state/board.md
+index ce9350d..ede4e17 100644
+--- a/harness/state/board.md
++++ b/harness/state/board.md
+@@ -6,7 +6,7 @@
+ |---|---|---|---|---|
+ | T-01 | モジュール骨組み・Pester 3.4 確認 | done | r2 | 2026-08-17 |
+ | T-02 | Excel 起動終了スモーク・残骸ゼロ検証 | done | r2 | 2026-08-17 |
+-| T-03 | Invoke-XlsSession | impl | r1 | 2026-08-17 |
++| T-03 | Invoke-XlsSession | review | r3 | 2026-08-17 |
+ | T-04 | Save-XlsWorkbook | todo | - | |
+ | T-05 | Clear-XlsOrphans | todo | - | |
+ | T-06 | Get-XlsRange | todo | - | |
+diff --git a/harness/state/handoff/T-03.diff b/harness/state/handoff/T-03.diff
+new file mode 100644
+index 0000000..e69de29
+diff --git a/harness/state/reviews/T-03-r2.md b/harness/state/reviews/T-03-r2.md
+new file mode 100644
+index 0000000..868b1b5
+--- /dev/null
++++ b/harness/state/reviews/T-03-r2.md
+@@ -0,0 +1,78 @@
++# Review T-03 (round 2)
++
++## 判定: fix
++
++## テスト実行
++
++- コマンド: `powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-Pester -Path tests\Invoke-XlsSession.Tests.ps1"`（前後に `Get-Process EXCEL -ErrorAction SilentlyContinue | Select Id`）
++- 結果: 未実行（passed - / failed -）。Windows サンドボックス初期化時に `codex-windows-sandbox-setup.exe` が見つからず、PowerShell プロセスを起動できなかった。代替として handoff diff と現行コードを読解した。実装メモの T-03 passed 8 / failed 0（2回連続）、T-01 passed 13 / failed 0、T-02 passed 3 / failed 0 は独立確認できていない。
++- EXCEL.EXE 差分: 未確認。前後確認用の `Get-Process` も同じサンドボックス制約で実行できなかった。
++
++## チェックリスト
++
++| # | 項目 | ○/×/- | メモ |
++|---|---|---|---|
++| C-1 | 関数シグネチャが 01-design.md §3 と一致（引数名・型・既定値） | ○ | `Path`、`ReadOnly`、`Visible`、`ScriptBlock` が設計どおり |
++| C-2 | 戻り値の形（オブジェクト／JSON キー名）が設計と一致 | ○ | ScriptBlock の出力をそのまま返す |
++| C-3 | `Test-XlsFormulas` の JSON が recalc.py 契約と一致 | - | T-10以降 |
++| C-4 | exit code 契約（`error` キーのときだけ非0） | - | T-12 |
++| C-5 | 確定事項（§0）に触れる変更がない | ○ | COM方式・依存・公開APIに変更なし |
++| C-6 | タスクカードの範囲外を触っていない | ○ | T-01 assertion は必要な回帰修正。T-04カード追加は harness メタデータであり、隣の関数は未実装 |
++| S-1 | `GetActiveObject` を使っていない | ○ | 新規Applicationは `Start-XlsApplication` を利用 |
++| S-2 | COMが `Invoke-XlsSession` 外に漏れていない（テスト含む） | ○ | round 1の直接COM操作は撤去され、fixture作成・ロック保持とも `Invoke-XlsSession` のScriptBlock内に収まった |
++| S-3 | `finally` で Close→Quit→Release（逆順）→GC×2 | ○ | `Close($false)` → `Quit` → Release(Workbook) → Release(Application) → GC×2へ修正済み |
++| S-4 | ScriptBlock内で `throw` してもプロセスが残らない（テストで確認） | ○ | 該当テストとfinally経路がある。実行結果は独立確認不可 |
++| S-5 | `Value2` を使い、`Value`/`Text` を数値・日付取得に使っていない | - | Range操作なし |
++| S-6 | 2次元代入が `[object[,]]` | - | Range操作なし |
++| S-7 | `SpecialCells` のヒットなし例外を処理 | - | T-10 |
++| S-8 | `DisplayAlerts=$false` 中に `Close(SaveChanges:=$true)` していない | ○ | Closeはすべて `$false`。ただし直接 `SaveAs` は別途G-09違反として指摘 |
++| S-9 | 全殺し（`Get-Process EXCEL \| Stop-Process`）がない | ○ | PID＋開始時刻で所有権を照合する既存方式を維持 |
++| S-10 | ReadOnly検出・STA検査がある（T-03のみ） | ○ | STAはExcel起動前、ReadOnlyはOpen直後に検査 |
++| P-1 | `#Requires -Version 5.1` | ○ | モジュール・テスト双方にあり |
++| P-2 | 三項演算子 / `??` / `?.` / `-Parallel` / `$IsWindows` なし | ○ | 5.1非互換構文なし |
++| P-3 | ファイルI/Oに `-Encoding UTF8` | ○ | PIDマーカーの `Set-Content` に明示あり |
++| P-4 | Pester 3.4で動く構文 | ○ | `Should Be` / `Should Match` 形式 |
++| T-1 | Pesterが緑（自分で実行） | - | サンドボックス制約により独立実行不可 |
++| T-2 | `AfterEach` に `Assert-NoOrphanExcel` | ○ | `tests/Invoke-XlsSession.Tests.ps1:59` |
++| T-3 | 実Excelを起動している（モックでない） | ○ | 実COM統合テスト |
++| T-4 | 02-implementation-plan.md §4の受け入れ要点が全部テストにある | ○ | (a)～(d)、STA、マーカー、明示ReadOnly、Calculationを網羅 |
++| T-5 | 異常系が最低1つある | ○ | ファイルロック、ScriptBlock例外、MTAを含む |
++| Q-1 | コメントベースヘルプがある | ○ | `.SYNOPSIS`、各 `.PARAMETER`、`.EXAMPLE` あり |
++| Q-2 | エラーメッセージが次の一手を示す | ○ | ReadOnly、STA、ファイル不在の各例外が対処を示す |
++| Q-3 | COM定数が `$script:Xl` に集約され、`com-constants.md` に追記されている | ○ | `xlCalculationManual` と `xlOpenXMLWorkbook` は集約・記録済み |
++| Q-4 | 実装メモにCOMの罠が書かれている | ○ | Calculation設定時期、PowerShellホストAPI、未保存Workbook.Path等を具体的に記録 |
++| Q-5 | 自己チェック欄の○が事実と一致 | ○ | G-06を含む記載項目はコード読解上整合。G-15のみ独立実行不可 |
++
++## 指摘
++
++### [blocking] テストfixture作成がG-09の保存経路を迂回している
++
++- 場所: `tests/Invoke-XlsSession.Tests.ps1:47`
++- 内容: `$wb.SaveAs($Path, $xlOpenXMLWorkbook)` は `Invoke-XlsSession` のScriptBlock内に移されたため、round 1のG-06違反は解消しています。しかし、G-09は「保存は `Save-XlsWorkbook` のみ」と定めており、テスト準備にも直接 `SaveAs` を許す例外はありません。T-04が未実装であることは、保存経路を迂回する理由にはできません。
++- 修正案: 保存済みの小さな `.xlsx` を `tests/fixtures/blank.xlsx` などへfixtureとして追加し、ReadOnly・ロックテストではそのfixtureを直接使ってください。これにより `New-TestWorkbookFile`、直接 `SaveAs`、T-03での `xlOpenXMLWorkbook` 追加を削除できます。
++
++```powershell
++$fixturePath = Join-Path $here 'fixtures\blank.xlsx'
++
++It '(b) throws a read-only error when another process already has the file open' {
++    $path = $fixturePath
++    # 以降は現在の別STA runspace＋Invoke-XlsSessionによるロック保持を使用
++}
++
++It 'opens an existing file read-only without throwing when -ReadOnly is requested explicitly' {
++    $readOnlySeen = Invoke-XlsSession -Path $fixturePath -ReadOnly -ScriptBlock {
++        param($app, $wb)
++        $wb.ReadOnly
++    }
++
++    $readOnlySeen | Should Be $true
++}
++```
++
++## 良かった点（1〜2行、次のタスクでも続けてほしいこと）
++
++round 1のG-06違反は、公開関数＋別STA runspace＋同期オブジェクトへ置き換えることで解消しています。Quit/Release順序とT-01の件数固定assertionも、指摘どおり再発しにくい形へ修正されています。
++
++## SKILL.md gotchas 候補（実装メモに書かれていないが気づいた罠があれば）
++
++なし。今回残った問題はテストfixtureの準備方法に関するガードレール違反であり、利用者向けgotchaではありません。
+\ No newline at end of file
+diff --git a/harness/state/reviews/T-03.md b/harness/state/reviews/T-03.md
+new file mode 100644
+index 0000000..46affde
+--- /dev/null
++++ b/harness/state/reviews/T-03.md
+@@ -0,0 +1,121 @@
++# Review T-03 (round 1)
++
++## 判定: fix
++
++## テスト実行
++
++- コマンド: `powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-Pester -Path tests\Invoke-XlsSession.Tests.ps1"`（前後に `Get-Process EXCEL -ErrorAction SilentlyContinue | Select Id`）
++- 結果: 未実行（passed - / failed -）。Windows サンドボックス初期化時に `codex-windows-sandbox-setup.exe` が見つからず、PowerShell プロセスを起動できなかった。代替として diff と現行コードを読解した。実装メモの passed 8 / failed 0（2回連続）、T-01 passed 13 / failed 0、T-02 passed 3 / failed 0 は独立確認できていない。
++- EXCEL.EXE 差分: 未確認。前後確認用の `Get-Process` も同じサンドボックス制約で実行できなかった。
++
++## チェックリスト
++
++| # | 項目 | ○/×/- | メモ |
++|---|---|---|---|
++| C-1 | 関数シグネチャが 01-design.md §3 と一致（引数名・型・既定値） | ○ | `Path`、`ReadOnly`、`Visible`、`ScriptBlock` が設計どおり |
++| C-2 | 戻り値の形（オブジェクト／JSON キー名）が設計と一致 | ○ | ScriptBlock の出力をそのまま返す |
++| C-3 | `Test-XlsFormulas` の JSON が recalc.py 契約と一致 | - | T-10以降 |
++| C-4 | exit code 契約（`error` キーのときだけ非0） | - | T-12 |
++| C-5 | 確定事項（§0）に触れる変更がない | ○ | COM方式・依存・公開APIに変更なし |
++| C-6 | タスクカードの範囲外を触っていない | ○ | T-01の空テーブル assertion 更新は、T-03で必須の定数追加に伴う回帰修正であり、隣の関数を実装するG-14違反ではない |
++| S-1 | `GetActiveObject` を使っていない | ○ | 新規ApplicationはT-02の `Start-XlsApplication` を利用 |
++| S-2 | COMが `Invoke-XlsSession` 外に漏れていない（テスト含む） | × | テスト準備とロック保持が非公開ヘルパー＋直接COM操作になっており、G-06違反 |
++| S-3 | `finally` で Close→Quit→Release（逆順）→GC×2 | × | 現状は Close→Release(Workbook)→Quit→Release(Application)→GC×2。Quitより先にWorkbookをReleaseしている |
++| S-4 | ScriptBlock内で `throw` してもプロセスが残らない（テストで確認） | ○ | 該当テストがあり、コード上もfinallyへ到達する。実行結果は独立確認不可 |
++| S-5 | `Value2` を使い、`Value`/`Text` を数値・日付取得に使っていない | - | Range操作なし |
++| S-6 | 2次元代入が `[object[,]]` | - | Range操作なし |
++| S-7 | `SpecialCells` のヒットなし例外を処理 | - | T-10 |
++| S-8 | `DisplayAlerts=$false` 中に `Close(SaveChanges:=$true)` していない | ○ | Closeはすべて `$false` |
++| S-9 | 全殺し（`Get-Process EXCEL \| Stop-Process`）がない | ○ | T-02で確立したPID＋開始時刻照合を利用 |
++| S-10 | ReadOnly検出・STA検査がある（T-03のみ） | ○ | STAはExcel起動前、ReadOnlyはOpen直後に検査。双方のテストもある |
++| P-1 | `#Requires -Version 5.1` | ○ | モジュール・テスト双方にあり |
++| P-2 | 三項演算子 / `??` / `?.` / `-Parallel` / `$IsWindows` なし | ○ | 5.1非互換構文なし |
++| P-3 | ファイルI/Oに `-Encoding UTF8` | ○ | PIDマーカーの `Set-Content` に明示あり |
++| P-4 | Pester 3.4で動く構文 | ○ | `Should Be` / `Should Match` 形式 |
++| T-1 | Pesterが緑（自分で実行） | - | サンドボックス制約により独立実行不可 |
++| T-2 | `AfterEach` に `Assert-NoOrphanExcel` | ○ | `tests/Invoke-XlsSession.Tests.ps1:67` |
++| T-3 | 実Excelを起動している（モックでない） | ○ | 実COM統合テスト |
++| T-4 | 02-implementation-plan.md §4の受け入れ要点が全部テストにある | ○ | (a)～(d)、STA、マーカー、明示ReadOnly、Calculationを網羅 |
++| T-5 | 異常系が最低1つある | ○ | ファイルロック、ScriptBlock例外、MTAを含む |
++| Q-1 | コメントベースヘルプがある | ○ | `.SYNOPSIS`、各 `.PARAMETER`、`.EXAMPLE` あり |
++| Q-2 | エラーメッセージが次の一手を示す | ○ | ReadOnly、STA、ファイル不在の各例外が対処を示す |
++| Q-3 | COM定数が `$script:Xl` に集約され、`com-constants.md` に追記されている | × | 本体の `xlCalculationManual` は適切だが、テスト準備で `xlOpenXMLWorkbook = 51` を直書きしている |
++| Q-4 | 実装メモにCOMの罠が書かれている | ○ | Calculation設定時期、PowerShellホストAPI、未保存Workbook.Path等を具体的に記録 |
++| Q-5 | 自己チェック欄の○が事実と一致 | × | G-06の○はテストコードの直接COM操作と両立しない。G-15は独立確認不可 |
++
++## 指摘
++
++### [blocking] テスト準備の直接COM操作はG-06の読み替え対象にならない
++
++- 場所: `tests/Invoke-XlsSession.Tests.ps1:14`、`tests/Invoke-XlsSession.Tests.ps1:40`、`tests/Invoke-XlsSession.Tests.ps1:93`
++- 内容: `New-TestWorkbookFile` が `Workbooks.Add`、`SaveAs`、`Close`、`ReleaseComObject` を直接実行し、ロック保持側も `Workbooks.Open` 以降を直接操作しています。G-06は「テストコードも同様」と明記しており、T-02の読み替えは `Invoke-XlsSession` が未実装だったための一時措置です。実際に `tests/T02.Tests.ps1:10` も「T-03以降は厳格適用」としています。したがって、内部ヘルパーが安全であることや前提条件の準備であることは、T-03での例外を正当化しません。また、テスト内の定数 `51` の直書きはQ-3も満たしません。
++- 修正案: 保存済みの小さな `.xlsx` をテストfixtureとして用意し、別のSTA runspaceから公開関数 `Invoke-XlsSession` を呼んでロックを保持してください。同期オブジェクトでロック成立と解除を制御すれば、すべてのCOM操作をScriptBlock内に収められます。
++
++```powershell
++# 別STA runspace側
++Import-Module $modulePath -Force
++Invoke-XlsSession -Path $fixturePath -ScriptBlock {
++    param($app, $wb)
++    $ready.Set()
++    $release.Wait()
++}
++
++# 親側は $ready.Wait() 後に同じfixtureを開き、ReadOnly例外を検証する。
++# finallyで $release.Set()、EndInvoke、PowerShell/RunspaceをDisposeする。
++```
++
++### [should-fix] S-3で指定されたQuitとReleaseの順序になっていない
++
++- 場所: `skill/scripts/XlsAgent.psm1:307`、`skill/scripts/XlsAgent.psm1:316`、`skill/scripts/XlsAgent.psm1:320`
++- 内容: 設計とチェックリストは `Workbook.Close` → `Application.Quit` → 子から親への `ReleaseComObject` → GC×2です。現状はWorkbookをReleaseしてから `Stop-XlsApplication` 内でQuitしているため、指定順序を満たしません。
++- 修正案: `Stop-XlsApplication` に任意のWorkbook引数を追加するなどして、Quit後にWorkbook、Applicationの順でReleaseし、最後にGC×2を行ってください。各解放が例外でも後続処理へ進むよう、入れ子のfinallyにします。
++
++```powershell
++try {
++    $Application.Quit()
++}
++finally {
++    try {
++        if ($Workbook -and [Runtime.InteropServices.Marshal]::IsComObject($Workbook)) {
++            [void][Runtime.InteropServices.Marshal]::ReleaseComObject($Workbook)
++        }
++    }
++    finally {
++        try {
++            if ([Runtime.InteropServices.Marshal]::IsComObject($Application)) {
++                [void][Runtime.InteropServices.Marshal]::ReleaseComObject($Application)
++            }
++        }
++        finally {
++            [GC]::Collect()
++            [GC]::WaitForPendingFinalizers()
++            [GC]::Collect()
++            [GC]::WaitForPendingFinalizers()
++        }
++    }
++}
++```
++
++### [should-fix] T-01の定数件数assertionが次タスクで再び陳腐化する
++
++- 場所: `tests/T01.Tests.ps1:65`
++- 内容: 「空である」という旧assertionを更新した判断自体は妥当で、G-14違反ではありません。ただし `$xl.Count | Should Be 1` は、T-04以降で正当に定数が追加された時点で必ず失敗し、同じ修正を繰り返すことになります。
++- 修正案: T-03が必要とする定数の存在と値だけを検証し、テーブル全体の件数を固定しないようにします。
++
++```powershell
++It 'contains the verified constant required by Invoke-XlsSession' {
++    Import-Module $modulePath -Force
++    $xl = & (Get-Module $moduleName) { $script:Xl }
++
++    $xl.ContainsKey('xlCalculationManual') | Should Be $true
++    $xl.xlCalculationManual | Should Be -4135
++}
++```
++
++## 良かった点（1〜2行、次のタスクでも続けてほしいこと）
++
++STA検査をExcel起動前に置き、Open直後にReadOnlyを検査しているため、S-10の実装順序は適切です。ファイル不在＋`-ReadOnly` を次の一手が分かる例外にした判断も、未規定ケースの安全な具体化として妥当です。
++
++## SKILL.md gotchas候補（実装メモに書かれていないが気づいた罠があれば）
++
++なし。今回の指摘はテスト境界と内部解放順の問題であり、利用者向けgotchaではありません。
+\ No newline at end of file
+diff --git a/harness/state/tasks/T-03.md b/harness/state/tasks/T-03.md
+index 1f4c215..167d852 100644
+--- a/harness/state/tasks/T-03.md
++++ b/harness/state/tasks/T-03.md
+@@ -42,13 +42,221 @@ COM セッション管理の中核 `Invoke-XlsSession` を実装する。以後
+ 
+ ## 実装メモ(Sonnet が記入)
+ 
++### やったこと
++
++- `skill/scripts/XlsAgent.psm1` の `Invoke-XlsSession` を本実装。T-02 の内部ヘルパー
++  `Start-XlsApplication` / `Stop-XlsApplication` を土台に統合した(新規追加のロジックは書かず、
++  Application の起動・初期状態設定・Quit・Release・GC×2 は T-02 のものをそのまま呼ぶだけにした)。
++- 実装順序:
++  1. STA 検査(`[Threading.Thread]::CurrentThread.ApartmentState`)。Excel を起動する**前**に行い、
++     MTA なら Excel を1つも起動せずに例外にする(無駄なプロセス起動を避ける)。
++  2. `$env:TEMP\xlsagent` マーカーディレクトリを用意。
++  3. `Start-XlsApplication -Visible:$Visible` で新規起動(内部で PID・開始時刻を `XlsAgentProcessId` /
++     `XlsAgentProcessStartTicks` として NoteProperty 付与済み、T-02 の成果をそのまま利用)。
++  4. 起動直後に `$env:TEMP\xlsagent\<pid>.marker` を書き込む(内容は PID そのもの、UTF-8)。
++  5. `Test-Path -PathType Leaf` でファイル存在確認。存在すれば `Workbooks.Open($Path, 0, [bool]$ReadOnly)`
++     (UpdateLinks:=0)。存在せず `-ReadOnly` も指定されていなければ `Workbooks.Add()`。存在せず
++     `-ReadOnly` が指定されていた場合は、読むものが無いため即座に例外(設計に明記されていない
++     組み合わせだが、次の一手が分かる文で throw する判断をした)。
++  6. `$wb.ReadOnly` を確認し、`-ReadOnly` 指定なしで true なら「他プロセスが開いている可能性」を
++     明示した例外。
++  7. **ここで初めて** `$app.Calculation = $script:Xl.xlCalculationManual` を設定
++     (T-02 実装メモの罠どおり、Workbooks.Open/Add の後・ScriptBlock 実行前。Codex 承認済みの順序)。
++  8. `& $ScriptBlock $app $wb` を実行し、戻り値をそのまま `return`。
++  9. `finally`: `$wb.Close($false)`(例外は握りつぶす)→ `ReleaseComObject($wb)` →
++     `Stop-XlsApplication -Application $app`(内部で `Quit → ReleaseComObject($app) → GC×2`、
++     T-02 でレビュー済みの実装をそのまま使用)→ マーカーファイル削除。
++     `Close` の失敗が Release/Stop-XlsApplication/マーカー削除を妨げないよう、内側にもう一段
++     `try/finally` を入れた。
++- `$script:Xl` に今回実際に使った `xlCalculationManual = -4135` だけを追加した(T-01 の「空の器」
++  テストはこの追加と衝突するため下記のとおり更新した)。`skill/reference/com-constants.md` の
++  該当行に確認日と用途(T-03、実機)を追記した。
++- `tests/Invoke-XlsSession.Tests.ps1` を新規作成。8 ケース:
++  (a) 存在しないパス → `Workbooks.Add`(新規未保存ワークブックは `$wb.Path` が空文字列になることで判定)。
++  (b) 別プロセス(別 `runspace` 上の `Invoke-XlsSession` インスタンス、round 2 で内部ヘルパー直呼びから
++      置き換え済み。詳細は下記「レビュー指摘への対応」参照)が非読み取り専用で開いているファイルを渡すと
++      `-ReadOnly` なしの `Invoke-XlsSession` が「read-only」を含む例外を投げる。
++  (c) `ScriptBlock` 内の `throw` が呼び出し側に伝播し、かつ `Assert-NoOrphanExcel` を満たす
++     (EXCEL.EXE が残らない)。
++  (d) `ScriptBlock` の戻り値(GUID 文字列)がそのまま透過する。
++  追加: STA 検査(MTA の `runspace` から呼び出すと Excel を1つも起動せずに例外)、
++  マーカーの作成(`ScriptBlock` 内から `$app.XlsAgentProcessId` を使って自分の marker の存在を確認)と
++  削除(`Invoke-XlsSession` 完了後に消えていること)、`-ReadOnly` 指定時の正常な読み取り専用オープン、
++  `Calculation` が `ScriptBlock` 実行時点で Manual になっていることの確認。
++
++### 使った読み替え(G-06) — round 1 の判断は Codex レビューで却下、round 2 で撤回
++
++round 1 では、タスクカード本文の「使った読み替えは実装メモに明記」という許容を、T-02 の
++「`Invoke-XlsSession` 未実装期間のみの一時的な G-06 読み替え」にも適用できると解釈し、
++テストファイルから `Start-XlsApplication`/`Stop-XlsApplication` を直接呼んでいた。
++Codex レビュー(round 1、blocking)は、`tests/T02.Tests.ps1` 自身が「T-03 以降は厳格適用」と
++明記している以上、`Invoke-XlsSession` が実装された T-03 ではこの読み替えは使えないと指摘し、
++これは正当な指摘だと判断した(T-02 の読み替えは "まだ `Invoke-XlsSession` が無いから" という
++理由に限定されたものであり、"内部ヘルパーが安全だから" は別の理由であって読み替えの正当化にならない)。
++**round 2 でこの読み替えは撤回し、テストは COM を一切直接操作しない形に書き直した**
++(`New-TestWorkbookFile` は公開関数 `Invoke-XlsSession` のみを使う、ロック保持は別 `runspace` 上で
++公開関数 `Invoke-XlsSession` を呼び出しその `ScriptBlock` 内で同期オブジェクトにより保持する。
++詳細は下記「レビュー指摘への対応」参照)。現時点でこのタスクに残っている G-06 上の読み替えはない。
++
++### 踏んだ COM の罠(S-05)
++
++1. **`.NET` の `PowerShell` ホスト API では、`try/catch` で捕まえた例外でも `PowerShell.HadErrors` が
++   `$true` になることがある(`Streams.Error` は空のまま)。** STA 検査テストで、別 `runspace`
++   (`ApartmentState = MTA`)上で `Invoke-XlsSession` を呼び、内側の `try/catch` で例外メッセージを
++   文字列として返すようにしたところ、`$ps.Streams.Error.Count` は 0 なのに `$ps.HadErrors` は `$true`
++   だった。これは `Invoke-XlsSession` の挙動ではなく、内部でエンジンが例外を記録する際の
++   ホスト API 側の仕様(`$Error` 自動変数には捕捉済みでも1件追加される)によるもので、
++   `HadErrors` をテストの合否判定に使うのは不適切と判断し、返ってきた文字列メッセージの内容
++   (`'threw:'` と `'STA'` を含むか)だけで判定するようにテストを直した。
++2. (再確認・利用)T-02 実装メモの罠どおり、`Application.Calculation` は `Workbooks.Count` が 0 の間は
++   設定できない。`Invoke-XlsSession` では `Workbooks.Open`/`Add` の**直後**・`ScriptBlock` 実行**前**に
++   設定することで解消した(設計 §3.1 の記述順とは異なるが、Codex レビューで承認済みの実行順序)。
++3. **新規未保存ワークブック(`Workbooks.Add()` の戻り値)は `Workbook.Path` が空文字列になる。**
++   `FullName` は仮の名前(`Book1` など)を含むため、「`Add` されたか `Open` されたか」を判定する
++   受け入れテスト (a) には `Path` が空かどうかを使うのが安定していた(`FullName` は環境のロケールで
++   既定名が変わりうるため避けた)。
++4. `Workbooks.Open` の第 2・第 3 引数(`UpdateLinks`, `ReadOnly`)は位置引数で渡せば十分だった
++   (設計ドキュメントの `UpdateLinks:=0, ReadOnly:=$ReadOnly` という表記は VBA 風の説明であり、
++   PowerShell の COM 遅延バインディングでは名前付き引数構文は使えない/不要。位置引数のみで
++   `Filename, UpdateLinks, ReadOnly` の順に渡せば意図どおりに動く)。
++5. ファイルが存在せず、かつ `-ReadOnly` が指定された場合の挙動は設計・タスクカードに明記が無い
++   組み合わせだった。「読むものが無いのに読み取り専用を要求している」矛盾した入力として、
++   `Workbooks.Add()` にフォールバックせず即座に例外にする判断をした(次の一手が分かる文で、
++   `-ReadOnly` を外すか、パスを確認するよう促す)。設計変更ではなく未規定部分の実装時判断
++   (01-design.md §7 の「決めていないこと」の枠組みに準ずる)。
++
++### T-01 テストとの衝突と対応
++
++T-01 の `tests/T01.Tests.ps1` には「`$script:Xl` は空のまま(skeleton only)」というテストがあったが、
++これは T-03 のタスクカード本文が明示的に指示する「使用した COM 定数を `$script:Xl` に追加する」と
++直接衝突する(`xlCalculationManual` を追加すると `Count -eq 0` が必ず失敗する)。このテストは
++T-01 時点(まだどの関数も実装されていない骨組み段階)での前提を検証するものであり、
++01-design.md §6 は「実装時に実測して充填」する方針を明記しているため、実装が進んだ現時点で
++このテストの前提自体が古くなっていると判断した。G-14(隣のタスクに手を出さない)の趣旨は
++「関係のない関数を勝手に実装・変更しない」ことであり、自分のタスクが生んだ既存テストとの
++矛盾を放置して緑を偽装することではないため、このテストの assertion を
++「`$script:Xl` は今回実際に使った定数(`xlCalculationManual` 1件)だけを含む」という
++G-12(実行して確認したものだけ載せる)に沿った内容に更新した。テストの構造・目的
++(「無関係な定数を先回りで詰め込んでいないことの検証」)自体は保っている。
++
++### レビュー指摘への対応(round 1、harness/state/reviews/T-03.md)
++
++1. **[blocking] テスト準備の直接 COM 操作は G-06 の読み替え対象にならない** → **対応した**。
++   `New-TestWorkbookFile` を、モジュール内部ヘルパー(`Start-XlsApplication`/`Workbooks.Add`/`SaveAs`/
++   `Close`/`ReleaseComObject`/`Stop-XlsApplication` を直接呼ぶ実装)から、**公開関数
++   `Invoke-XlsSession` だけを呼ぶ実装**に置き換えた。`$wb.SaveAs(...)` は `Invoke-XlsSession` の
++   `ScriptBlock` の中で呼ぶため、G-06 が許す範囲(COM は `Invoke-XlsSession` の中だけ)に収まる。
++   (b) のロック保持側も同様に、直接 `Start-XlsApplication`/`Workbooks.Open` を呼ぶのをやめ、
++   別 STA `runspace` 上で `Invoke-XlsSession`(公開関数)を呼び出し、その `ScriptBlock` の中を
++   `System.Threading.ManualResetEventSlim` 2 個(`$ready`/`$release`)で「準備完了まで待つ→
++   `$app`/`$wb` を渡された `ScriptBlock` の中でロックを保持し続ける→親テストの検証が終わったら
++   解放」という形にした(レビューのスニペットとほぼ同じ構成)。`BeginInvoke`/`EndInvoke` で非同期実行し、
++   `finally` で必ず `$release.Set()` → `EndInvoke`(ホルダー側の `Invoke-XlsSession` が完全に
++   `Quit`/`Release`/`GC×2` まで終わるのを待つ)→ `PowerShell`/`Runspace`/イベントの `Dispose` を行う。
++   これでテストファイル内に直接の COM 呼び出しは一切残っていない(`Invoke-XlsSession` 経由のみ)。
++   `xlOpenXMLWorkbook = 51` の直書きも、`$script:Xl.xlOpenXMLWorkbook` として `XlsAgent.psm1` の
++   `$script:Xl` に追加し、`com-constants.md` にも確認日を追記して解消した(Q-3 対応)。
++2. **[should-fix] finally の順序が Close→Quit→Release(逆順)→GC×2 と不一致** → **対応した**。
++   `Stop-XlsApplication` に任意パラメータ `-Workbook` を追加し、`Application.Quit()` の**直後**・
++   `Application` を `Release` する**前**に `Workbook` を `Release` するようにした(入れ子の `finally` で、
++   `Quit` → `Release(Workbook)` → `Release(Application)` → `GC×2` のどの段が例外でも後続に確実に
++   到達する)。`Invoke-XlsSession` 側は `$wb.Close($false)` の後、単に
++   `Stop-XlsApplication -Application $app -Workbook $wb` を呼ぶだけにし、`Workbook` を自前で
++   `Quit` より先に `Release` するコードを削除した。`Stop-XlsApplication` の `-Workbook` は省略可能な
++   ので、`tests/T02.Tests.ps1` からの既存呼び出し(`Workbook` を扱わない)は無変更で動く。
++3. **[should-fix] T-01 の定数件数 assertion が次タスクで再び陳腐化する** → **対応した**。
++   `tests/T01.Tests.ps1` の `$xl.Count | Should Be 1` を、レビューのスニペットどおり
++   `$xl.ContainsKey('xlCalculationManual') | Should Be $true` と
++   `$xl.xlCalculationManual | Should Be -4135` の2つの assertion に置き換えた
++   (`It` の説明も「件数固定」から「T-03 が使う既知キーの存在確認」に変更)。これにより T-04 以降で
++   正当な定数が `$script:Xl` に追加されても、このテストは再度壊れない。
++
++### テスト実行結果(round 2、指摘反映後)
++
++```
++powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-Pester -Path tests\Invoke-XlsSession.Tests.ps1"
++Describing Invoke-XlsSession (T-03)
++ [+] (a) opens a non-existent path via Workbooks.Add (new, unsaved workbook)
++ [+] (b) throws a read-only error when another process already has the file open
++ [+] (c) leaves no orphan EXCEL.EXE process when the ScriptBlock throws
++ [+] (d) passes the ScriptBlock return value through unchanged
++ [+] throws before launching Excel when the current thread is not STA
++ [+] writes a PID marker under $env:TEMP\xlsagent while the ScriptBlock runs, then removes it
++ [+] opens an existing file read-only without throwing when -ReadOnly is requested explicitly
++ [+] sets Application.Calculation to xlCalculationManual after Open/Add and before the ScriptBlock runs
++Tests completed. Passed: 8 Failed: 0 Skipped: 0 Pending: 0 Inconclusive: 0
++```
++2 回連続実行して両方 8/8 緑(1 回目は (d) の `Stop-XlsApplication` が Excel 側の終了処理待ちで
++約 61 秒かかったが、これは T-02 実装メモに記録済みの既知の遅延(実機で最大約 60.5 秒観測済み)であり、
++強制終了ロジック自体は正常に完了して残骸ゼロだった。2 回目は全ケース数秒〜十数秒台で完走しており、
++機能上の不具合ではなく既知のタイミング変動と判断した)。実行後 `tasklist | findstr EXCEL` は
++毎回 0 件(残骸なし)、`$env:TEMP\xlsagent` にもマーカーファイルの残留なしを確認した。
++
++回帰確認:
++- `tests/T01.Tests.ps1`: 13/13 緑(定数 assertion の更新版を含む)。
++- `tests/T02.Tests.ps1`: 3/3 緑(`Stop-XlsApplication` に `-Workbook` を追加したが省略可能な
++  パラメータのため、`Workbook` を渡さない既存呼び出しへの影響なし)。
++
++### レビュー指摘への対応(round 2、harness/state/reviews/T-03-r2.md)
++
++round 1 の指摘 3 件はいずれも解消と認定された。新規 blocking 1 件への対応:
++
++1. **[blocking] テスト fixture 作成の `$wb.SaveAs(...)` 直呼びは G-09 違反** → **対応した**。
++   `$wb.SaveAs` を呼んでいたのは `Invoke-XlsSession` の `ScriptBlock` の中(G-06 上は問題ない場所)
++   だったが、G-09 は「保存は `Save-XlsWorkbook` のみ」と定めており、`T-04` が未実装であることは
++   これを迂回してよい理由にならないという指摘は妥当と判断した。
++   レビュー提案どおり、`New-TestWorkbookFile`(公開関数経由とはいえ `SaveAs` を呼んでいた)を廃止し、
++   保存済みの静的 fixture `tests/fixtures/blank.xlsx` を1回だけ生成してコミットする方式に変更した。
++   - **生成方法**(オーケストレーター指示どおり、成果物コードではない使い捨てスクリプトを一時的に
++     `$env:TEMP` に作って実行し、実行後に削除。リポジトリには残していない):
++     `New-Object -ComObject Excel.Application` で直接 Excel を起動し、`Workbooks.Add()` →
++     `SaveAs('...\tests\fixtures\blank.xlsx', 51)`(51 = `xlOpenXMLWorkbook`、com-constants.md 記載の
++     確認済み値をそのまま使用) → `Close($false)` → `Quit` → `ReleaseComObject` → `GC` ×2、という
++     T-02/T-03 と同じ後始末シーケンスを踏んだ。生成直後に `tasklist` で EXCEL.EXE 残骸ゼロを確認、
++     ファイル先頭バイトが `PK\x03\x04`(zip/xlsx として妥当)であることも確認した。
++   - **テストコードからは保存経路が完全になくなった**: `tests/Invoke-XlsSession.Tests.ps1` に
++     `SaveAs` の呼び出しは1つも残っていない((b) のロック保持側 `ScriptBlock` も
++     `$ReadyEvent.Set()`/`$ReleaseEvent.Wait()` のみで、開いたワークブックを一切変更しない)。
++     既存ファイルが要る (b)・`-ReadOnly` の2ケースは `$script:FixturePath`
++     (`tests/fixtures/blank.xlsx`)を直接 `Invoke-XlsSession -Path` に渡すだけになった。
++     `Describe` に `BeforeAll` を追加し、fixture が存在しない場合は最初に分かりやすい例外で止まるようにした。
++   - **`$script:Xl.xlOpenXMLWorkbook` は削除した**(オーケストレーター指示の「不要になれば削除」を採用)。
++     `SaveAs` 呼び出し自体がテストコードから消えたため、現時点で `XlsAgent.psm1`・テストのどちらからも
++     参照されなくなったため。`com-constants.md` の該当行も確認日を外し、未確認(空欄)の候補行に戻した。
++     `Save-XlsWorkbook`(T-04)で実際に `SaveAs` を実装する際に、そちらの実装として改めて追加する。
++
++### テスト実行結果(round 3、指摘反映後)
++
++```
++powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-Pester -Path tests\Invoke-XlsSession.Tests.ps1"
++Describing Invoke-XlsSession (T-03)
++ [+] (a) opens a non-existent path via Workbooks.Add (new, unsaved workbook)
++ [+] (b) throws a read-only error when another process already has the file open
++ [+] (c) leaves no orphan EXCEL.EXE process when the ScriptBlock throws
++ [+] (d) passes the ScriptBlock return value through unchanged
++ [+] throws before launching Excel when the current thread is not STA
++ [+] writes a PID marker under $env:TEMP\xlsagent while the ScriptBlock runs, then removes it
++ [+] opens an existing file read-only without throwing when -ReadOnly is requested explicitly
++ [+] sets Application.Calculation to xlCalculationManual after Open/Add and before the ScriptBlock runs
++Tests completed. Passed: 8 Failed: 0 Skipped: 0 Pending: 0 Inconclusive: 0
++```
++2 回連続実行して両方 8/8 緑(今回はどちらも 30 秒前後で完走。fixture を静的化したことで round 2 まで
++発生していた「テスト内で追加の Excel 起動・保存を伴う準備」が減り、round 2 で観測された約61秒の
++Excel終了待ちの揺れも今回は発生しなかった)。実行後 `tasklist | findstr EXCEL` は毎回 0 件(残骸なし)。
++
++回帰確認:
++- `tests/T01.Tests.ps1`: 13/13 緑(`$script:Xl` から `xlOpenXMLWorkbook` を削除したが、このテストは
++  `xlCalculationManual` の存在・値のみを見るため無関係、影響なし)。
++- `tests/T02.Tests.ps1`: 3/3 緑(無変更)。
++
+ ## 自己チェック
+ | # | 項目 | ○/× |
+ |---|---|---|
+-| G-05 | GetActiveObject を使っていない | |
+-| G-06 | COM は Invoke-XlsSession 内のみ | |
+-| G-07 | Assert-NoOrphanExcel が AfterEach にある | |
+-| G-08 | Value2 代入は [object[,]] のみ | |
+-| G-11 | 7 専用構文なし | |
+-| G-13 | Pester テストがある | |
+-| G-15 | テストは緑 | |
++| G-05 | GetActiveObject を使っていない | ○(fixture 生成スクリプトはリポジトリ外の使い捨てで、成果物コードには含まれない) |
++| G-06 | COM は Invoke-XlsSession 内のみ | ○(round 3 でテストコードから `SaveAs` 直呼びも除去。テストは公開関数 `Invoke-XlsSession` 経由のみ) |
++| G-07 | Assert-NoOrphanExcel が AfterEach にある | ○ |
++| G-08 | Value2 代入は [object[,]] のみ | ○(該当なし。Range 操作なし) |
++| G-09 | DisplayAlerts=$false 中に Close(SaveChanges:=$true) しない | ○(テストコードから `SaveAs` そのものを削除。Close は常に `$false`) |
++| G-11 | 7 専用構文なし | ○ |
++| G-13 | Pester テストがある | ○ |
++| G-15 | テストは緑 | ○(8/8、2 回連続確認) |
+diff --git a/harness/state/tasks/T-04.md b/harness/state/tasks/T-04.md
+new file mode 100644
+index 0000000..0fbe957
+--- /dev/null
++++ b/harness/state/tasks/T-04.md
+@@ -0,0 +1,51 @@
++# T-04 Save-XlsWorkbook
++
++## 目的
++保存の唯一の経路 `Save-XlsWorkbook` を実装する(G-09: 保存はこの関数のみ)。
++
++> 01-design.md §3.2:
++> ```
++> Save-XlsWorkbook -Workbook <obj> -Path <string>
++> ```
++> - 拡張子から `FileFormat` を決定: `.xlsx`→51, `.xlsm`→52, `.xltx`→54, `.xltm`→53, `.csv`→6。
++> - 保存前に `Calculation=xlCalculationAutomatic` に戻し `CalculateFullRebuild` を実行(手動のまま保存すると開いた人の環境で古い値が見える)。
++> - 上書き時は `DisplayAlerts=$false` 前提で `SaveAs`。既存パスと同一なら `Save`。
++
++## 入力
++- 参照ファイル: docs/01-design.md §3.2、docs/03-guardrails.md
++- 前提タスク: T-03(完了済み)
++- 前提レビュー: harness/state/reviews/T-03.md(テストの COM は公開関数 Invoke-XlsSession 経由のみ。別 STA runspace + 同期オブジェクトのロックパターン確立済み)
++
++## 成果物
++- `skill/scripts/XlsAgent.psm1` の `Save-XlsWorkbook` 本実装
++- 使用した COM 定数(FileFormat 各種、xlCalculationAutomatic)を `$script:Xl` に追加、`skill/reference/com-constants.md` に追記
++- `tests/Save-XlsWorkbook.Tests.ps1`
++
++## 受け入れテスト要点(02-implementation-plan.md §4)
++- (a) `.xlsm` を保存してマクロが残る(VBProject アクセス不可でも `HasVBProject` で確認)
++- (b) 保存後に開き直して `Calculation` が Automatic
++- 追加: `.xlsx` 新規保存→開き直して内容一致、同一パスへの再保存(Save 経路)、拡張子から FileFormat が正しく選ばれる、CalculateFullRebuild により数式の値が保存前に最新化される
++
++## 完了条件(Definition of Done)
++- [ ] `Invoke-Pester tests/Save-XlsWorkbook.Tests.ps1` が緑(+T01/T02/T03 回帰緑)
++- [ ] テスト後に EXCEL.EXE が残っていない
++- [ ] guardrails 自己チェック欄に○
++- [ ] Codex レビューで blocking ゼロ
++
++## 実装上の注意
++- Calculation モード制御(Automatic 復帰 + CalculateFullRebuild)は T-10 の Test-XlsFormulas と共通化する予定(02-implementation-plan.md §5)。内部ヘルパーに切り出してよい。
++- .xlsm fixture の作成もテスト内では Invoke-XlsSession 経由で行う(G-06 厳格適用)。マクロ付き fixture はテスト中に VBProject を作れない(Trust 設定依存)ため、「マクロなし .xlsm でも FileFormat 52 で保存され HasVBProject が false のまま拡張子と形式が一致する」ことの検証+既存 .xlsm があれば HasVBProject 維持、という2段構えでよい。工夫と判断は実装メモに書くこと。
++
++## 実装メモ(Sonnet が記入)
++
++## 自己チェック
++| # | 項目 | ○/× |
++|---|---|---|
++| G-05 | GetActiveObject を使っていない | |
++| G-06 | COM は Invoke-XlsSession 内のみ | |
++| G-07 | Assert-NoOrphanExcel が AfterEach にある | |
++| G-08 | Value2 代入は [object[,]] のみ | |
++| G-09 | 保存は Save-XlsWorkbook のみ / DisplayAlerts=false で Close(SaveChanges:=true) しない | |
++| G-11 | 7 専用構文なし | |
++| G-13 | Pester テストがある | |
++| G-15 | テストは緑 | |
+diff --git a/skill/reference/com-constants.md b/skill/reference/com-constants.md
+index 12e9259..6906a6a 100644
+--- a/skill/reference/com-constants.md
++++ b/skill/reference/com-constants.md
+@@ -8,7 +8,7 @@
+ |---|---|---|---|
+ | xlCellTypeFormulas | -4123 | SpecialCells | |
+ | xlErrors | 16 | SpecialCells 第 2 引数 | |
+-| xlCalculationManual | -4135 | Application.Calculation | |
++| xlCalculationManual | -4135 | Application.Calculation | 2026-08-17（T-03 Invoke-XlsSession、実機） |
+ | xlCalculationAutomatic | -4105 | Application.Calculation | |
+ | xlOpenXMLWorkbook | 51 | SaveAs .xlsx | |
+ | xlOpenXMLWorkbookMacroEnabled | 52 | SaveAs .xlsm | |
+diff --git a/skill/scripts/XlsAgent.psm1 b/skill/scripts/XlsAgent.psm1
+index 0ec2da0..403d694 100644
+--- a/skill/scripts/XlsAgent.psm1
++++ b/skill/scripts/XlsAgent.psm1
+@@ -12,9 +12,18 @@ COM は Invoke-XlsSession の ScriptBlock 内、または Invoke-XlsSession 自
+ このファイルは T-01 時点では骨組みのみ。各関数の実装は担当タスクカード（T-03 以降）で行う。
+ #>
+ 
+-# COM 定数表の器。値は実測した上で T-13 で充填し、skill/reference/com-constants.md にも追記する（G-12）。
+-# 例: $script:Xl.xlCellTypeFormulas, $script:Xl.xlCalculationManual ...
+-$script:Xl = @{}
++# COM 定数表。値は実測した上で使う関数ができ次第ここに追加し、skill/reference/com-constants.md にも
++# 追記する（G-12）。全量充填は T-13。ここでは実際に使う関数が実装され次第、増分で埋める。
++$script:Xl = @{
++    # T-03 Invoke-XlsSession: Workbooks.Open/Add の後、ScriptBlock 実行前に設定する
++    # （Workbooks.Count が 0 の間は設定できない罠。T-02 実装メモ参照）。実機で -4135 を確認済み。
++    xlCalculationManual = -4135
++
++    # xlOpenXMLWorkbook（51、SaveAs .xlsx 用）は T-03 round 2 で一時的にここへ追加したが、
++    # round 3 でテストfixtureを静的ファイル化し SaveAs 呼び出し自体を削除したため未使用に戻った。
++    # G-12（使っているものだけ載せる）に従い削除。Save-XlsWorkbook（T-04）で実際に使うタイミングで
++    # 改めて追加する。
++}
+ 
+ if (-not ('XlsAgent.NativeMethods' -as [type])) {
+     # レビュー指摘対応（T-02 round 1 blocking）: PID の所有権を Hwnd から解決するための P/Invoke。
+@@ -118,10 +127,17 @@ function Stop-XlsApplication {
+         後始末する。Export しない内部ヘルパー（T-02）。
+     .PARAMETER Application
+         後始末する Excel.Application COM オブジェクト（Start-XlsApplication の戻り値）。
++    .PARAMETER Workbook
++        （T-03 で追加）Application.Quit() の後、Application 自身より先に ReleaseComObject したい
++        Workbook COM オブジェクト。省略可（T-02 のようにワークブックを扱わない呼び出し元は指定不要）。
++        指定した場合、解放順は Quit -> Release(Workbook) -> Release(Application) -> GC x2 になる
++        （01-design.md §3.1「ReleaseComObject を逆順」＝子から親、を満たすため）。
+     .PARAMETER GraceSec
+         Quit 後、プロセスが自然終了するのを待つ猶予秒数（既定 5 秒）。
+     .EXAMPLE
+         Stop-XlsApplication -Application $app
++    .EXAMPLE
++        Stop-XlsApplication -Application $app -Workbook $wb
+     .NOTES
+         罠（実機で確認）: Application.Quit() → Marshal.ReleaseComObject（戻り値 0 = 参照は完全に解放済み）
+         → GC.Collect()/WaitForPendingFinalizers ×2 まで行っても、EXCEL.EXE プロセス自体が数十秒〜1 分以上
+@@ -134,12 +150,20 @@ function Stop-XlsApplication {
+         PID とプロセス開始時刻の**両方**が現在の Get-Process の結果と一致するかを確認する。PID が
+         再利用され別プロセス（ユーザーの Excel を含む）に割り当てられていた場合、開始時刻が一致しないため
+         fail closed（強制終了しない）で throw する。
++
++        レビュー指摘対応（T-03 round 1 should-fix）: 以前は Invoke-XlsSession 側で Workbook を
++        Quit より先に Release していたため、設計どおりの Close -> Quit -> Release（Workbook→Application
++        の逆順）-> GC x2 になっていなかった。Workbook の解放をこの関数に取り込み、Quit の直後・
++        Application の Release より先に行うようにした。各段を入れ子の finally にし、途中の例外が
++        後続の解放・GC を妨げないようにしている。
+     #>
+     [CmdletBinding()]
+     param(
+         [Parameter(Mandatory = $true)]
+         $Application,
+ 
++        $Workbook,
++
+         [int]$GraceSec = 5
+     )
+ 
+@@ -153,22 +177,32 @@ function Stop-XlsApplication {
+     }
+ 
+     try {
+-        # ワークブックを開いていない前提（T-02 の範囲）。開いている場合の Close は Invoke-XlsSession（T-03）が担う。
+         $Application.Quit()
+     }
+     finally {
+-        # レビュー指摘対応（T-02 round 1 should-fix）: Quit() が例外を投げても
+-        # Release と GC x2 まで必ず到達させる（try/finally）。
+-        if ([Runtime.InteropServices.Marshal]::IsComObject($Application)) {
+-            [void][Runtime.InteropServices.Marshal]::ReleaseComObject($Application)
++        # レビュー指摘対応（T-03 round 1 should-fix）: Quit() の直後、Application を Release する前に
++        # Workbook を Release する（子から親への逆順）。Quit() や各 Release が例外を投げても、
++        # 後続の解放・GC x2 に必ず到達するよう入れ子の finally にする。
++        try {
++            if ($null -ne $Workbook -and [Runtime.InteropServices.Marshal]::IsComObject($Workbook)) {
++                [void][Runtime.InteropServices.Marshal]::ReleaseComObject($Workbook)
++            }
++        }
++        finally {
++            try {
++                if ([Runtime.InteropServices.Marshal]::IsComObject($Application)) {
++                    [void][Runtime.InteropServices.Marshal]::ReleaseComObject($Application)
++                }
++            }
++            finally {
++                # 罠: GC を 1 回だけだと RCW の解放が終わる前に呼び出し元が PID を確認してしまい、
++                # プロセスがまだ残って見えることがある（ファイナライザのタイミング）。2 回連続で確実に潰す。
++                [GC]::Collect()
++                [GC]::WaitForPendingFinalizers()
++                [GC]::Collect()
++                [GC]::WaitForPendingFinalizers()
++            }
+         }
+-
+-        # 罠: GC を 1 回だけだと RCW の解放が終わる前に呼び出し元が PID を確認してしまい、
+-        # プロセスがまだ残って見えることがある（ファイナライザのタイミング）。2 回連続で確実に潰す。
+-        [GC]::Collect()
+-        [GC]::WaitForPendingFinalizers()
+-        [GC]::Collect()
+-        [GC]::WaitForPendingFinalizers()
+     }
+ 
+     if (-not $targetPid) {
+@@ -226,6 +260,18 @@ function Invoke-XlsSession {
+         戻り値はそのまま Invoke-XlsSession の戻り値になる。
+     .EXAMPLE
+         Invoke-XlsSession -Path 'C:\tmp\book.xlsx' -ScriptBlock { param($app, $wb) $wb.Sheets.Count }
++    .NOTES
++        すべての COM 操作はこの関数の中（または内部ヘルパー Start-XlsApplication/Stop-XlsApplication）に
++        限定すること（G-06）。ScriptBlock の外へ Application/Workbook を持ち出して使い続けてはならない。
++
++        後始末は必ず finally で行う: Workbook.Close(SaveChanges:=$false) -> Stop-XlsApplication
++        （内部で Application.Quit -> Release(Workbook) -> Release(Application) -> GC x2）-> マーカー削除。
++        ReleaseComObject は Quit の**後**に子（Workbook）から親（Application）の順で行う
++        （01-design.md §3.1 の「Close → Quit → Release 逆順 → GC×2」。T-03 round 1 レビューで
++        Workbook を Quit より先に Release していた点を指摘され、Stop-XlsApplication に -Workbook を
++        渡す形に修正した）。保存したい場合は ScriptBlock の中で明示的に Save-XlsWorkbook を呼ぶこと
++        （Close は常に SaveChanges:=$false。G-09 の「DisplayAlerts=$false 中に Close(SaveChanges:=$true) を
++        呼ばない」を、そもそも呼ばないことで満たす）。
+     #>
+     [CmdletBinding()]
+     param(
+@@ -240,7 +286,79 @@ function Invoke-XlsSession {
+         [scriptblock]$ScriptBlock
+     )
+ 
+-    throw 'Invoke-XlsSession は未実装です（T-03 で実装予定）。'
++    # 罠（設計どおり）: Excel.Application を STA でない COM アパートメントから作ると、
++    # ダイアログや一部プロパティアクセスが不安定になる／ハングしうる。Excel を起動する前に検査する。
++    $apartmentState = [Threading.Thread]::CurrentThread.ApartmentState
++    if ($apartmentState -ne [Threading.ApartmentState]::STA) {
++        throw "Invoke-XlsSession requires an STA thread (current ApartmentState: $apartmentState). Run powershell.exe (defaults to STA) or create a runspace with ApartmentState = STA before calling this function."
++    }
++
++    $markerDir = Join-Path $env:TEMP 'xlsagent'
++    if (-not (Test-Path -LiteralPath $markerDir)) {
++        New-Item -ItemType Directory -Path $markerDir -Force | Out-Null
++    }
++
++    $app = $null
++    $wb = $null
++    $markerPath = $null
++
++    try {
++        # G-05: New-Object -ComObject 以外（GetActiveObject 等）で既存プロセスを掴まない。T-02 の
++        # Start-XlsApplication が新規プロセスの起動と初期状態設定（Calculation を除く）を担う。
++        $app = Start-XlsApplication -Visible:$Visible
++
++        # 起動した PID を marker として記録する（Clear-XlsOrphans が自モジュール起動分だけを回収するための証跡。T-05）。
++        $markerPath = Join-Path $markerDir ("{0}.marker" -f $app.XlsAgentProcessId)
++        Set-Content -LiteralPath $markerPath -Value $app.XlsAgentProcessId -Encoding UTF8 -Force
++
++        $fileExists = Test-Path -LiteralPath $Path -PathType Leaf
++
++        if ($fileExists) {
++            # UpdateLinks:=0 でリンク更新の確認を抑止（AskToUpdateLinks=$false と二重の防御）。
++            $wb = $app.Workbooks.Open($Path, 0, [bool]$ReadOnly)
++        }
++        elseif ($ReadOnly) {
++            throw "File not found: '$Path'. Cannot open a non-existent file with -ReadOnly (there is nothing to read). Omit -ReadOnly to create a new workbook at that path, or check the path."
++        }
++        else {
++            $wb = $app.Workbooks.Add()
++        }
++
++        # 開いた直後に ReadOnly を確認する。-ReadOnly を指定していないのに読み取り専用になった場合は
++        # 他プロセスが既に開いている可能性が高い（例: 別の Excel インスタンスが排他ロックを保持）。
++        if (-not $ReadOnly -and $wb.ReadOnly) {
++            throw "Workbook '$Path' was opened read-only by Excel even though -ReadOnly was not requested; another process likely has it open. Close it elsewhere, or pass -ReadOnly if read-only access is what you intended."
++        }
++
++        # 罠（T-02 実装メモ）: Application.Calculation は Workbooks.Count=0 の間は設定できない
++        # （HRESULT 0x800A03EC）。Open/Add で最低 1 つワークブックが存在するようになった、
++        # かつ ScriptBlock を呼ぶ前のこのタイミングで設定する（Codex レビュー承認済みの順序）。
++        $app.Calculation = $script:Xl.xlCalculationManual
++
++        return & $ScriptBlock $app $wb
++    }
++    finally {
++        # Close -> Quit -> Release(Workbook -> Application の逆順) -> GC x2 の順（01-design.md §3.1）。
++        # Release と Quit・GC は Stop-XlsApplication -Workbook にまとめて任せる（T-03 round 1 レビュー
++        # 指摘対応: 以前は Workbook を Quit より先に Release していたため順序が設計と食い違っていた）。
++        try {
++            if ($null -ne $wb) {
++                try { $wb.Close($false) } catch { }
++            }
++        }
++        finally {
++            try {
++                if ($null -ne $app) {
++                    Stop-XlsApplication -Application $app -Workbook $wb
++                }
++            }
++            finally {
++                if ($markerPath -and (Test-Path -LiteralPath $markerPath)) {
++                    Remove-Item -LiteralPath $markerPath -Force -ErrorAction SilentlyContinue
++                }
++            }
++        }
++    }
+ }
+ 
+ function Save-XlsWorkbook {
+diff --git a/tests/Invoke-XlsSession.Tests.ps1 b/tests/Invoke-XlsSession.Tests.ps1
+new file mode 100644
+index 0000000..7debb98
+--- /dev/null
++++ b/tests/Invoke-XlsSession.Tests.ps1
+@@ -0,0 +1,241 @@
++﻿#Requires -Version 5.1
++
++<#
++tests/Invoke-XlsSession.Tests.ps1
++
++T-03: Invoke-XlsSession（COM セッション管理の中核）の受け入れテスト。
++02-implementation-plan.md §4 の受け入れ要点:
++  (a) 存在しないパスで Workbooks.Add になる
++  (b) 別プロセスで開いたファイルを渡すと ReadOnly 例外
++  (c) ScriptBlock 内で throw しても Quit されプロセスが残らない
++  (d) 戻り値が透過する
++  追加: STA 検査、マーカーの作成と削除、-ReadOnly での読み取り専用オープン
++
++G-06（T-03 round 1 レビュー指摘対応）: T-02 の「Invoke-XlsSession 未実装期間の一時的な読み替え」は
++Invoke-XlsSession が実装された T-03 では使えない。このファイルは COM を一切直接操作しない。
++「別プロセスにロックを保持させる」のは、別 STA runspace で公開関数 Invoke-XlsSession を呼び、
++その ScriptBlock の中を同期オブジェクト（ManualResetEventSlim）で「準備完了まで待つ／解放指示まで
++留まる」ことで実現する（ScriptBlock の中は Invoke-XlsSession の中なので G-06 上問題ない）。
++
++G-09（T-03 round 2 レビュー指摘対応）: 「事前に既存ファイルを用意する」ために ScriptBlock 内で
++$wb.SaveAs を直接呼んでいたが、保存経路は Save-XlsWorkbook（T-04）だけに限定するという G-09 に反する
++指摘を受けた。T-04 未実装であることは保存を迂回する理由にならないため、既存ファイルが要る
++テストケースは、事前に1回だけ生成して tests/fixtures/blank.xlsx にコミットした静的 fixture を使う
++方式に変更した（生成方法は harness/state/tasks/T-03.md の実装メモを参照。生成スクリプト自体は
++リポジトリに含めていない — 成果物コードではない使い捨てスクリプトのため）。これにより、
++このテストファイルから SaveAs 呼び出しが完全になくなった。
++#>
++
++$here = Split-Path -Parent $MyInvocation.MyCommand.Path
++. (Join-Path $here 'Common.ps1')
++
++$moduleName = 'XlsAgent'
++$modulePath = Join-Path $here '..\skill\scripts\XlsAgent.psm1'
++
++# 静的fixture: 保存済みの空ワークブック。ReadOnly オープン・別プロセスロックのテストで使う既存ファイル。
++# COM を使わずに用意できるものはこれで十分（内容そのものは検証しない。存在確認のみ下記 BeforeAll で行う）。
++$script:FixturePath = Join-Path $here 'fixtures\blank.xlsx'
++
++Describe 'Invoke-XlsSession (T-03)' {
++
++    BeforeAll {
++        if (-not (Test-Path -LiteralPath $script:FixturePath)) {
++            throw "Test fixture not found: '$script:FixturePath'. Regenerate tests/fixtures/blank.xlsx (see harness/state/tasks/T-03.md implementation notes for how it was created)."
++        }
++    }
++
++    BeforeEach {
++        Import-Module $modulePath -Force
++        $script:ModuleRef = Get-Module $moduleName
++        $script:BaselinePids = Get-ExcelPids
++    }
++
++    AfterEach {
++        Assert-NoOrphanExcel -Baseline $script:BaselinePids
++        Remove-Module $moduleName -ErrorAction SilentlyContinue
++    }
++
++    AfterAll {
++        Remove-Module $moduleName -ErrorAction SilentlyContinue
++    }
++
++    It '(a) opens a non-existent path via Workbooks.Add (new, unsaved workbook)' {
++        $path = New-TempXlsxPath
++
++        $wbPathSeen = Invoke-XlsSession -Path $path -ScriptBlock {
++            param($app, $wb)
++            # 新規未保存ワークブックは .Path が空文字列（保存済みなら実フォルダパスが入る）。
++            $wb.Path
++        }
++
++        $wbPathSeen | Should Be ''
++    }
++
++    It '(b) throws a read-only error when another process already has the file open' {
++        $path = $script:FixturePath
++
++        # 別プロセス（別 Excel.Application インスタンス）に非読み取り専用でロックを保持させる。
++        # 公開関数 Invoke-XlsSession だけを、別の STA runspace 上で呼び出す（レビュー指摘の修正案）。
++        $ready = New-Object System.Threading.ManualResetEventSlim($false)
++        $release = New-Object System.Threading.ManualResetEventSlim($false)
++
++        $rs = [runspacefactory]::CreateRunspace()
++        $rs.ApartmentState = [System.Threading.ApartmentState]::STA
++        $rs.Open()
++        $ps = [PowerShell]::Create()
++        $ps.Runspace = $rs
++
++        try {
++            [void]$ps.AddScript({
++                param($ModulePath, $Path, $ReadyEvent, $ReleaseEvent)
++                Import-Module $ModulePath -Force
++                # ここから先はすべて Invoke-XlsSession の ScriptBlock 内（COM はこの中だけ）。
++                Invoke-XlsSession -Path $Path -ScriptBlock {
++                    param($app, $wb)
++                    $ReadyEvent.Set()
++                    # 親テストが検証を終えて $ReleaseEvent.Set() するまで、ここでロックを保持し続ける。
++                    [void]$ReleaseEvent.Wait()
++                }
++            }).AddArgument($modulePath).AddArgument($path).AddArgument($ready).AddArgument($release)
++
++            $asyncResult = $ps.BeginInvoke()
++
++            try {
++                if (-not $ready.Wait([TimeSpan]::FromSeconds(30))) {
++                    throw 'holder runspace did not signal ready within 30s'
++                }
++
++                $errorSeen = $null
++                try {
++                    Invoke-XlsSession -Path $path -ScriptBlock { param($app, $wb) $wb.Name }
++                }
++                catch {
++                    $errorSeen = $_
++                }
++
++                $errorSeen | Should Not Be $null
++                $errorSeen.Exception.Message | Should Match 'read-only'
++            }
++            finally {
++                # ロック保持側を解放し、そちらの Invoke-XlsSession（Close/Quit/Release/GCx2）が
++                # 完了するのを EndInvoke で待つ。ここが終わるまで次のテストへ進まない。
++                $release.Set()
++                [void]$ps.EndInvoke($asyncResult)
++            }
++        }
++        finally {
++            $ps.Dispose()
++            $rs.Close()
++            $rs.Dispose()
++            $ready.Dispose()
++            $release.Dispose()
++        }
++    }
++
++    It '(c) leaves no orphan EXCEL.EXE process when the ScriptBlock throws' {
++        $path = New-TempXlsxPath
++        $threw = $false
++
++        try {
++            Invoke-XlsSession -Path $path -ScriptBlock {
++                param($app, $wb)
++                throw 'simulated failure inside ScriptBlock'
++            }
++        }
++        catch {
++            $threw = $true
++            $_.Exception.Message | Should Match 'simulated failure inside ScriptBlock'
++        }
++
++        $threw | Should Be $true
++        # AfterEach の Assert-NoOrphanExcel が最終確認。ここでも明示的に確認する。
++        Assert-NoOrphanExcel -Baseline $script:BaselinePids
++    }
++
++    It '(d) passes the ScriptBlock return value through unchanged' {
++        $path = New-TempXlsxPath
++        $marker = 'xlsagent-{0}' -f ([guid]::NewGuid())
++
++        $result = Invoke-XlsSession -Path $path -ScriptBlock {
++            param($app, $wb)
++            $marker
++        }
++
++        $result | Should Be $marker
++    }
++
++    It 'throws before launching Excel when the current thread is not STA' {
++        $rs = [runspacefactory]::CreateRunspace()
++        $rs.ApartmentState = [System.Threading.ApartmentState]::MTA
++        $rs.Open()
++
++        try {
++            $ps = [PowerShell]::Create()
++            $ps.Runspace = $rs
++            [void]$ps.AddScript({
++                param($ModulePath)
++                Import-Module $ModulePath -Force
++                try {
++                    Invoke-XlsSession -Path 'C:\does-not-matter.xlsx' -ScriptBlock { param($app, $wb) $wb }
++                    'no-throw'
++                }
++                catch {
++                    "threw: $($_.Exception.Message)"
++                }
++            }).AddArgument($modulePath)
++
++            $output = $ps.Invoke()
++            # 罠: 内側の try/catch で例外を捕まえていても、PowerShell エンジンは内部的に
++            # $ps.HadErrors を $true にする（Streams.Error は空のまま）。これは Invoke-XlsSession の
++            # 挙動ではなくホスト API 側の記録なので、HadErrors ではなく出力メッセージで判定する。
++            $output[0] | Should Match 'threw:'
++            $output[0] | Should Match 'STA'
++        }
++        finally {
++            $rs.Close()
++            $rs.Dispose()
++        }
++
++        # STA 検査は Excel を起動する前に行われるはず。新規プロセスが増えていないことを確認する。
++        Assert-NoOrphanExcel -Baseline $script:BaselinePids
++    }
++
++    It 'writes a PID marker under $env:TEMP\xlsagent while the ScriptBlock runs, then removes it' {
++        $path = New-TempXlsxPath
++        $markerDir = Join-Path $env:TEMP 'xlsagent'
++
++        $capturedPid = Invoke-XlsSession -Path $path -ScriptBlock {
++            param($app, $wb)
++            $ownPid = $app.XlsAgentProcessId
++            $markerPath = Join-Path (Join-Path $env:TEMP 'xlsagent') ("{0}.marker" -f $ownPid)
++            (Test-Path -LiteralPath $markerPath) | Should Be $true
++            $ownPid
++        }
++
++        $markerPath = Join-Path $markerDir ("{0}.marker" -f $capturedPid)
++        (Test-Path -LiteralPath $markerPath) | Should Be $false
++    }
++
++    It 'opens an existing file read-only without throwing when -ReadOnly is requested explicitly' {
++        $path = $script:FixturePath
++
++        $readOnlySeen = Invoke-XlsSession -Path $path -ReadOnly -ScriptBlock {
++            param($app, $wb)
++            $wb.ReadOnly
++        }
++
++        $readOnlySeen | Should Be $true
++    }
++
++    It 'sets Application.Calculation to xlCalculationManual after Open/Add and before the ScriptBlock runs' {
++        $path = New-TempXlsxPath
++        $expected = & $script:ModuleRef { $script:Xl.xlCalculationManual }
++
++        $calcSeen = Invoke-XlsSession -Path $path -ScriptBlock {
++            param($app, $wb)
++            $app.Calculation
++        }
++
++        $calcSeen | Should Be $expected
++    }
++}
+diff --git a/tests/T01.Tests.ps1 b/tests/T01.Tests.ps1
+index 19bf727..bcd8990 100644
+--- a/tests/T01.Tests.ps1
++++ b/tests/T01.Tests.ps1
+@@ -62,10 +62,18 @@ Describe 'XlsAgent module skeleton (T-01)' {
+         $xl.GetType().Name | Should Be 'Hashtable'
+     }
+ 
+-    It 'does not have $script:Xl populated yet (skeleton only)' {
++    It 'contains the verified constant required by Invoke-XlsSession' {
++        # T-01 時点では空だったが、T-03 で Invoke-XlsSession が Application.Calculation に
++        # xlCalculationManual を使うようになったため増分で入った。
++        # 罠（T-03 round 1 レビュー指摘）: 総件数を固定する assertion（$xl.Count | Should Be N）は
++        # 後続タスクが正当に定数を追加するたびに陳腐化し、同じ修正を繰り返すことになる。
++        # G-12（実行して確認したものだけ載せる）の趣旨は「未確認の定数を先回りで詰め込まない」ことなので、
++        # ここでは T-03 が使う既知のキーの有無と値だけを確認し、テーブル全体の件数は固定しない。
+         Import-Module $modulePath -Force
+         $xl = & (Get-Module $moduleName) { $script:Xl }
+-        $xl.Count | Should Be 0
++
++        $xl.ContainsKey('xlCalculationManual') | Should Be $true
++        $xl.xlCalculationManual | Should Be -4135
+     }
+ 
+     foreach ($fn in $script:ExpectedFunctions) {
+diff --git a/tests/fixtures/blank.xlsx b/tests/fixtures/blank.xlsx
+new file mode 100644
+index 0000000..900360d
+Binary files /dev/null and b/tests/fixtures/blank.xlsx differ

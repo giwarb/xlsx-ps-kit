@@ -62,10 +62,18 @@ Describe 'XlsAgent module skeleton (T-01)' {
         $xl.GetType().Name | Should Be 'Hashtable'
     }
 
-    It 'does not have $script:Xl populated yet (skeleton only)' {
+    It 'contains the verified constant required by Invoke-XlsSession' {
+        # T-01 時点では空だったが、T-03 で Invoke-XlsSession が Application.Calculation に
+        # xlCalculationManual を使うようになったため増分で入った。
+        # 罠（T-03 round 1 レビュー指摘）: 総件数を固定する assertion（$xl.Count | Should Be N）は
+        # 後続タスクが正当に定数を追加するたびに陳腐化し、同じ修正を繰り返すことになる。
+        # G-12（実行して確認したものだけ載せる）の趣旨は「未確認の定数を先回りで詰め込まない」ことなので、
+        # ここでは T-03 が使う既知のキーの有無と値だけを確認し、テーブル全体の件数は固定しない。
         Import-Module $modulePath -Force
         $xl = & (Get-Module $moduleName) { $script:Xl }
-        $xl.Count | Should Be 0
+
+        $xl.ContainsKey('xlCalculationManual') | Should Be $true
+        $xl.xlCalculationManual | Should Be -4135
     }
 
     foreach ($fn in $script:ExpectedFunctions) {

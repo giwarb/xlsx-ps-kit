@@ -12,9 +12,18 @@ COM は Invoke-XlsSession の ScriptBlock 内、または Invoke-XlsSession 自�
 このファイルは T-01 時点では骨組みのみ。各関数の実装は担当タスクカード（T-03 以降）で行う。
 #>
 
-# COM 定数表の器。値は実測した上で T-13 で充填し、skill/reference/com-constants.md にも追記する（G-12）。
-# 例: $script:Xl.xlCellTypeFormulas, $script:Xl.xlCalculationManual ...
-$script:Xl = @{}
+# COM 定数表。値は実測した上で使う関数ができ次第ここに追加し、skill/reference/com-constants.md にも
+# 追記する（G-12）。全量充填は T-13。ここでは実際に使う関数が実装され次第、増分で埋める。
+$script:Xl = @{
+    # T-03 Invoke-XlsSession: Workbooks.Open/Add の後、ScriptBlock 実行前に設定する
+    # （Workbooks.Count が 0 の間は設定できない罠。T-02 実装メモ参照）。実機で -4135 を確認済み。
+    xlCalculationManual = -4135
+
+    # xlOpenXMLWorkbook（51、SaveAs .xlsx 用）は T-03 round 2 で一時的にここへ追加したが、
+    # round 3 でテストfixtureを静的ファイル化し SaveAs 呼び出し自体を削除したため未使用に戻った。
+    # G-12（使っているものだけ載せる）に従い削除。Save-XlsWorkbook（T-04）で実際に使うタイミングで
+    # 改めて追加する。
+}
 
 if (-not ('XlsAgent.NativeMethods' -as [type])) {
     # レビュー指摘対応（T-02 round 1 blocking）: PID の所有権を Hwnd から解決するための P/Invoke。
@@ -118,10 +127,17 @@ function Stop-XlsApplication {
         後始末する。Export しない内部ヘルパー（T-02）。
     .PARAMETER Application
         後始末する Excel.Application COM オブジェクト（Start-XlsApplication の戻り値）。
+    .PARAMETER Workbook
+        （T-03 で追加）Application.Quit() の後、Application 自身より先に ReleaseComObject したい
+        Workbook COM オブジェクト。省略可（T-02 のようにワークブックを扱わない呼び出し元は指定不要）。
+        指定した場合、解放順は Quit -> Release(Workbook) -> Release(Application) -> GC x2 になる
+        （01-design.md §3.1「ReleaseComObject を逆順」＝子から親、を満たすため）。
     .PARAMETER GraceSec
         Quit 後、プロセスが自然終了するのを待つ猶予秒数（既定 5 秒）。
     .EXAMPLE
         Stop-XlsApplication -Application $app
+    .EXAMPLE
+        Stop-XlsApplication -Application $app -Workbook $wb
     .NOTES
         罠（実機で確認）: Application.Quit() → Marshal.ReleaseComObject（戻り値 0 = 参照は完全に解放済み）
         → GC.Collect()/WaitForPendingFinalizers ×2 まで行っても、EXCEL.EXE プロセス自体が数十秒〜1 分以上
@@ -134,11 +150,19 @@ function Stop-XlsApplication {
         PID とプロセス開始時刻の**両方**が現在の Get-Process の結果と一致するかを確認する。PID が
         再利用され別プロセス（ユーザーの Excel を含む）に割り当てられていた場合、開始時刻が一致しないため
         fail closed（強制終了しない）で throw する。
+
+        レビュー指摘対応（T-03 round 1 should-fix）: 以前は Invoke-XlsSession 側で Workbook を
+        Quit より先に Release していたため、設計どおりの Close -> Quit -> Release（Workbook→Application
+        の逆順）-> GC x2 になっていなかった。Workbook の解放をこの関数に取り込み、Quit の直後・
+        Application の Release より先に行うようにした。各段を入れ子の finally にし、途中の例外が
+        後続の解放・GC を妨げないようにしている。
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
         $Application,
+
+        $Workbook,
 
         [int]$GraceSec = 5
     )
@@ -153,22 +177,32 @@ function Stop-XlsApplication {
     }
 
     try {
-        # ワークブックを開いていない前提（T-02 の範囲）。開いている場合の Close は Invoke-XlsSession（T-03）が担う。
         $Application.Quit()
     }
     finally {
-        # レビュー指摘対応（T-02 round 1 should-fix）: Quit() が例外を投げても
-        # Release と GC x2 まで必ず到達させる（try/finally）。
-        if ([Runtime.InteropServices.Marshal]::IsComObject($Application)) {
-            [void][Runtime.InteropServices.Marshal]::ReleaseComObject($Application)
+        # レビュー指摘対応（T-03 round 1 should-fix）: Quit() の直後、Application を Release する前に
+        # Workbook を Release する（子から親への逆順）。Quit() や各 Release が例外を投げても、
+        # 後続の解放・GC x2 に必ず到達するよう入れ子の finally にする。
+        try {
+            if ($null -ne $Workbook -and [Runtime.InteropServices.Marshal]::IsComObject($Workbook)) {
+                [void][Runtime.InteropServices.Marshal]::ReleaseComObject($Workbook)
+            }
         }
-
-        # 罠: GC を 1 回だけだと RCW の解放が終わる前に呼び出し元が PID を確認してしまい、
-        # プロセスがまだ残って見えることがある（ファイナライザのタイミング）。2 回連続で確実に潰す。
-        [GC]::Collect()
-        [GC]::WaitForPendingFinalizers()
-        [GC]::Collect()
-        [GC]::WaitForPendingFinalizers()
+        finally {
+            try {
+                if ([Runtime.InteropServices.Marshal]::IsComObject($Application)) {
+                    [void][Runtime.InteropServices.Marshal]::ReleaseComObject($Application)
+                }
+            }
+            finally {
+                # 罠: GC を 1 回だけだと RCW の解放が終わる前に呼び出し元が PID を確認してしまい、
+                # プロセスがまだ残って見えることがある（ファイナライザのタイミング）。2 回連続で確実に潰す。
+                [GC]::Collect()
+                [GC]::WaitForPendingFinalizers()
+                [GC]::Collect()
+                [GC]::WaitForPendingFinalizers()
+            }
+        }
     }
 
     if (-not $targetPid) {
@@ -226,6 +260,18 @@ function Invoke-XlsSession {
         戻り値はそのまま Invoke-XlsSession の戻り値になる。
     .EXAMPLE
         Invoke-XlsSession -Path 'C:\tmp\book.xlsx' -ScriptBlock { param($app, $wb) $wb.Sheets.Count }
+    .NOTES
+        すべての COM 操作はこの関数の中（または内部ヘルパー Start-XlsApplication/Stop-XlsApplication）に
+        限定すること（G-06）。ScriptBlock の外へ Application/Workbook を持ち出して使い続けてはならない。
+
+        後始末は必ず finally で行う: Workbook.Close(SaveChanges:=$false) -> Stop-XlsApplication
+        （内部で Application.Quit -> Release(Workbook) -> Release(Application) -> GC x2）-> マーカー削除。
+        ReleaseComObject は Quit の**後**に子（Workbook）から親（Application）の順で行う
+        （01-design.md §3.1 の「Close → Quit → Release 逆順 → GC×2」。T-03 round 1 レビューで
+        Workbook を Quit より先に Release していた点を指摘され、Stop-XlsApplication に -Workbook を
+        渡す形に修正した）。保存したい場合は ScriptBlock の中で明示的に Save-XlsWorkbook を呼ぶこと
+        （Close は常に SaveChanges:=$false。G-09 の「DisplayAlerts=$false 中に Close(SaveChanges:=$true) を
+        呼ばない」を、そもそも呼ばないことで満たす）。
     #>
     [CmdletBinding()]
     param(
@@ -240,7 +286,79 @@ function Invoke-XlsSession {
         [scriptblock]$ScriptBlock
     )
 
-    throw 'Invoke-XlsSession は未実装です（T-03 で実装予定）。'
+    # 罠（設計どおり）: Excel.Application を STA でない COM アパートメントから作ると、
+    # ダイアログや一部プロパティアクセスが不安定になる／ハングしうる。Excel を起動する前に検査する。
+    $apartmentState = [Threading.Thread]::CurrentThread.ApartmentState
+    if ($apartmentState -ne [Threading.ApartmentState]::STA) {
+        throw "Invoke-XlsSession requires an STA thread (current ApartmentState: $apartmentState). Run powershell.exe (defaults to STA) or create a runspace with ApartmentState = STA before calling this function."
+    }
+
+    $markerDir = Join-Path $env:TEMP 'xlsagent'
+    if (-not (Test-Path -LiteralPath $markerDir)) {
+        New-Item -ItemType Directory -Path $markerDir -Force | Out-Null
+    }
+
+    $app = $null
+    $wb = $null
+    $markerPath = $null
+
+    try {
+        # G-05: New-Object -ComObject 以外（GetActiveObject 等）で既存プロセスを掴まない。T-02 の
+        # Start-XlsApplication が新規プロセスの起動と初期状態設定（Calculation を除く）を担う。
+        $app = Start-XlsApplication -Visible:$Visible
+
+        # 起動した PID を marker として記録する（Clear-XlsOrphans が自モジュール起動分だけを回収するための証跡。T-05）。
+        $markerPath = Join-Path $markerDir ("{0}.marker" -f $app.XlsAgentProcessId)
+        Set-Content -LiteralPath $markerPath -Value $app.XlsAgentProcessId -Encoding UTF8 -Force
+
+        $fileExists = Test-Path -LiteralPath $Path -PathType Leaf
+
+        if ($fileExists) {
+            # UpdateLinks:=0 でリンク更新の確認を抑止（AskToUpdateLinks=$false と二重の防御）。
+            $wb = $app.Workbooks.Open($Path, 0, [bool]$ReadOnly)
+        }
+        elseif ($ReadOnly) {
+            throw "File not found: '$Path'. Cannot open a non-existent file with -ReadOnly (there is nothing to read). Omit -ReadOnly to create a new workbook at that path, or check the path."
+        }
+        else {
+            $wb = $app.Workbooks.Add()
+        }
+
+        # 開いた直後に ReadOnly を確認する。-ReadOnly を指定していないのに読み取り専用になった場合は
+        # 他プロセスが既に開いている可能性が高い（例: 別の Excel インスタンスが排他ロックを保持）。
+        if (-not $ReadOnly -and $wb.ReadOnly) {
+            throw "Workbook '$Path' was opened read-only by Excel even though -ReadOnly was not requested; another process likely has it open. Close it elsewhere, or pass -ReadOnly if read-only access is what you intended."
+        }
+
+        # 罠（T-02 実装メモ）: Application.Calculation は Workbooks.Count=0 の間は設定できない
+        # （HRESULT 0x800A03EC）。Open/Add で最低 1 つワークブックが存在するようになった、
+        # かつ ScriptBlock を呼ぶ前のこのタイミングで設定する（Codex レビュー承認済みの順序）。
+        $app.Calculation = $script:Xl.xlCalculationManual
+
+        return & $ScriptBlock $app $wb
+    }
+    finally {
+        # Close -> Quit -> Release(Workbook -> Application の逆順) -> GC x2 の順（01-design.md §3.1）。
+        # Release と Quit・GC は Stop-XlsApplication -Workbook にまとめて任せる（T-03 round 1 レビュー
+        # 指摘対応: 以前は Workbook を Quit より先に Release していたため順序が設計と食い違っていた）。
+        try {
+            if ($null -ne $wb) {
+                try { $wb.Close($false) } catch { }
+            }
+        }
+        finally {
+            try {
+                if ($null -ne $app) {
+                    Stop-XlsApplication -Application $app -Workbook $wb
+                }
+            }
+            finally {
+                if ($markerPath -and (Test-Path -LiteralPath $markerPath)) {
+                    Remove-Item -LiteralPath $markerPath -Force -ErrorAction SilentlyContinue
+                }
+            }
+        }
+    }
 }
 
 function Save-XlsWorkbook {
