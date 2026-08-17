@@ -15,8 +15,8 @@
 | T-09 | Set-XlsRange | done | r1 | 2026-08-17 |
 | T-10 | Test-XlsFormulas 関数 | done | r1 | 2026-08-17 |
 | T-11 | 外部リンク refused / -Force | done | r1 | 2026-08-17 |
-| T-12 | Test-XlsFormulas.ps1 CLI | impl | r1 | 2026-08-17 |
-| T-13 | com-constants.md 充填 | todo | - | |
+| T-12 | Test-XlsFormulas.ps1 CLI | done | r4 | 2026-08-18 |
+| T-13 | com-constants.md 充填 | impl | r1 | 2026-08-18 |
 | T-14 | patterns.md | todo | - | |
 | T-15 | SKILL.md 確定 | todo | - | |
 | T-16 | ベンチマーク | todo | - | |

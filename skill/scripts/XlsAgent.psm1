@@ -343,6 +343,15 @@ function Invoke-XlsSession {
         扱い、共有違反（＝いま誰かがこのマーカーを保持している＝進行中のセッション）なら一切手を
         触れない。PowerShell ホストがクラッシュすれば OS がハンドルを自動的に解放するため、真の孤児
         だけが回収可能になる（詳細は Clear-XlsOrphans の .NOTES と T-05 実装メモを参照）。
+
+        `$env:XLSAGENT_RUN_TOKEN`（T-12 CLI 専用の非公開フック、T-12 round 2 レビュー対応）:
+        設定されている場合のみ、マーカーの Write+Flush 完了直後に `$env:TEMP\xlsagent-ready\
+        <トークン>.ready`（PID・起動時刻・トークンの 3 行、通常のファイル I/O でロックしない）を
+        追加で書く。公開パラメーター・既定動作（環境変数未設定時）は一切変更しない。マーカー本体は
+        排他リースのため外部から内容を読めない設計上、CLI 側がタイムアウト待ちを開始してよい
+        （＝マーカーが完全に書き終わっている）タイミングを検知するための専用シグナルとして追加した。
+        詳細は `skill/scripts/Test-XlsFormulas.ps1` の .NOTES と `harness/state/tasks/T-12.md` の
+        実装メモを参照。
     #>
     [CmdletBinding()]
     param(
@@ -392,6 +401,31 @@ function Invoke-XlsSession {
         [byte[]]$markerBytes = [Text.Encoding]::UTF8.GetPreamble() + [Text.Encoding]::UTF8.GetBytes($markerText)
         $markerLease.Write($markerBytes, 0, $markerBytes.Length)
         $markerLease.Flush()
+
+        # T-12 CLI の所有権ハンドシェイク専用の非公開フック（$env:XLSAGENT_RUN_TOKEN が設定されている
+        # ときだけ動作。T-12 round 2 レビュー blocking 対応。公開シグネチャ・既定動作は一切変えない）。
+        # マーカー本体は Clear-XlsOrphans の排他判定のため FileShare.None のまま保持し続ける必要があり、
+        # 外部から内容を読むと必ず共有違反になる（意図した設計）。そこで、マーカーの Write+Flush が
+        # 完了した直後にだけ、ロックしない別の「ready ファイル」（実行ごとに一意なトークンをファイル名に
+        # 使う）を書く。CLI 側はこのファイルの出現だけをポーリングし、他プロセスの無関係なマーカーや
+        # 内容が未確定なマーカーで誤って所有権確立と判定することを避ける。環境変数が未設定の通常の
+        # 呼び出し（既存のテスト・利用者すべて）では、このブロックは実行されず一切の動作変化がない。
+        if ($env:XLSAGENT_RUN_TOKEN) {
+            try {
+                $readyDir = Join-Path $env:TEMP 'xlsagent-ready'
+                if (-not (Test-Path -LiteralPath $readyDir)) {
+                    New-Item -ItemType Directory -Path $readyDir -Force | Out-Null
+                }
+                $readyPath = Join-Path $readyDir ("{0}.ready" -f $env:XLSAGENT_RUN_TOKEN)
+                $readyText = "{0}`r`n{1}`r`n{2}`r`n" -f $app.XlsAgentProcessId, $app.XlsAgentProcessStartTicks, $env:XLSAGENT_RUN_TOKEN
+                [IO.File]::WriteAllText($readyPath, $readyText, (New-Object Text.UTF8Encoding($true)))
+            }
+            catch {
+                # ready ファイルの書き込み失敗はハンドシェイクの機会を1回逃すだけで、マーカー本体の
+                # 整合性・後始末には影響しない。呼び出し元（CLI）は所有権確立を検知できないまま
+                # 待ち続けるだけなので、ここで握りつぶしても安全側（強制終了しない）に倒れる。
+            }
+        }
 
         $fileExists = Test-Path -LiteralPath $Path -PathType Leaf
 
